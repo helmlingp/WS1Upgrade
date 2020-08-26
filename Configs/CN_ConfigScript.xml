@@ -1,0 +1,56 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<properties>
+  <property name="ADDLOCAL" value="Web_Console,AirWatch_Services,AirWatch_Agent_Builder,AirWatch_Content_Delivery,AirWatch_Device_Scheduler,GEM_Services,AirWatch_GEM_InventoryService,AirWatch_Integration_Service,AirWatch_Messaging_Service,AirWatch_Policy_Engine,AirWatch_SMS_Service,AirWatch_Website,Bulk_Import_Service,Common,Content_Pull_Service,Default_Website,Event_Change_Queue_Monitor,MEG_Queue_Service,Cisco_ISE_Integration,AirWatch_Directory_Sync_Service" />
+  <!-- Installation Directory -->
+  <property name="INSTALLDIR" value="E:\AirWatch\" />
+  <!-- SQL Server Host Name -->
+  <property name="IS_SQLSERVER_SERVER" value="XXXXXDBSERVERXXXXX" />
+  <!-- SQL Server Authentication Type; Windows Auth = 0, SQL Server Auth = 1 -->
+  <property name="IS_SQLSERVER_AUTHENTICATION" value="1" />
+  <!-- SQL Server Username -->
+  <property name="IS_SQLSERVER_USERNAME" value="XXXXXDBUSERXXXXX" />
+  <!-- SQL Server Database Name -->
+  <property name="IS_SQLSERVER_DATABASE" value="XXXXXDBNAMEXXXXX" />
+  <!-- SQL Server Password -->
+  <property name="IS_SQLSERVER_PASSWORD" value="XXXXXPASSWDXXXXX" />
+  <!-- If 0 is selected for Windows Auth, this is the Windows Auth Username -->
+  <property name="IS_NET_API_LOGON_USERNAME" value="" />
+  <!-- If 0 is selected for Windows Auth, this is the Windows Auth Password -->
+  <property name="IS_NET_API_LOGON_PASSWORD" value="" />
+  <!-- AirWatch Console DNS Address -->
+  <property name="AWSERVER" value="XXXXXURLXXXXX" />
+  <!-- AirWatch Console Scheme; HTTPS = 1, HTTP = empty string -->
+  <property name="AWSERVERSCHEME" value="1" />
+  <!-- AirWatch DeviceServices DNS Address -->
+  <property name="AWSERVERDS" value="XXXXXURLXXXXX" />
+  <!-- AirWatch DeviceServices Scheme; HTTPS = 1, HTTP = empty string -->
+  <property name="AWSERVERDSSCHEME" value="1" />
+  <!-- API server SSL offloading status; SSL offloaded = 1, Not SSL offloaded = empty string -->
+  <property name="AWAPISSLOFFLOADED" value="" />
+  <!-- Target IIS Website for publishing AirWatch -->
+  <property name="AWWEBSITE" value="Default Web Site" />
+  <!-- AWCM Server Listening Interface -->
+  <property name="ACMSERVERIP" value="0.0.0.0" />
+  <!-- AWCM Server Listening Port -->
+  <property name="ACMSERVERPORT" value="2001" />
+  <!-- AWCM Clustering Model; Implicit = 1, Explicit = 2 -->
+  <property name="AWCMCLUSTER" value="1" />
+  <!-- Comma separated list of nodes for Explicit Clustering -->
+  <property name="AWCMNODES" value="" />
+  <!-- AWCM server SSL offloading status; SSL offloaded = 1, Not SSL offloaded = empty string -->
+  <property name="AWCMSSLOFFLOADED" value="1" />
+  <!-- Use your own publicly trusted SSL cert for AWCM; If providing cert = empty string; Use a self signed cert = 1 -->
+  <property name="AWCMUSEOWNCERT" value="" />
+  <!-- Absolute path to cert for AWCM, if providing own -->
+  <property name="AWCMCERT" value="" />
+  <!-- Password for AWCM certificate, if providing own -->
+  <property name="AwcmCertPass" value="" />
+  <!-- Company Name for GEM -->
+  <property name="AWGEMCOMPANY" value="XXXXXCOMPANY_NAMEXXXXX" />
+  <!-- GEM Environment Type; Options: Production, POC, UAT -->
+  <property name="AWGEMENVTYPE" value="Production" />
+  <!-- Leave empty unless this is a Partner install -->
+  <property name="AWPARTNERID" value="" />
+  <!-- Installer will not make a backup copy of the previous AirWatch version folder = true, Backup will occur = false-->
+  <property name="AWIGNOREBACKUP" value="true" />
+</properties>
