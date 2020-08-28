@@ -347,6 +347,56 @@ New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type D
     return $completedVMs
 }
 
+function InstallAirwatch {
+    param(
+        [String]$guestOsAccount,
+        [String]$guestOsPassword,
+        [Array]$vmArray,
+        [Parameter(ParameterSetName='CN_Install')]
+        [Switch]$CnInstall,
+        [Parameter(ParameterSetName='DS_Install')]
+        [Switch]$DsInstall,
+        [Parameter(ParameterSetName='API_Install')]
+        [Switch]$ApiInstall
+    )
+
+    $awSetupSuccessfullyCmd = @"
+    Get-Item -Path $deploymentDestinationDirectory\AppInstall.log | Select-String -Pattern "Installation operation completed successfully"
+"@
+
+    for($i = 0; $i -lt $vmArray.count; $i++){ 
+        #Skip null or empty properties.
+        If ([string]::IsNullOrEmpty($vmArray[$i].Name)){Continue}
+        $vmName = $vmArray[$i].Name
+
+	    Write-Host "Installing AirWatch on $($vmName). This will take a while."
+        If($CnInstall){
+            $ConfigFile = $cnConfigXmlDestinationPath
+        }
+        If($DsInstall){
+            $ConfigFile = $dsConfigXmlDestinationPath
+        }
+        If($ApiInstall){
+            $ConfigFile = $apiConfigXmlDestinationPath
+        }
+
+        # Run the command to install the AirWatch App  
+        $installAppScriptBlock = [scriptblock]::Create("CMD /C $airwatchAppInstallDestinationBinary /s /V`"/qn /lie $deploymentDestinationDirectory\AppInstall.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$ConfigFile`"")
+        Invoke-VMScript -ScriptText $installAppScriptBlock -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
+
+        #Check the install worked by looking for this line in the publish log file - "Updating database (Complete)"
+        $awSetupSuccessfully = Invoke-VMScript -ScriptText $awSetupSuccessfullyCmd -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
+        If($awSetupSuccessfully -notlike "*Installation operation completed successfully*"){
+            #throw "Failed to setup AirWatch App. Could not find a line in the Publish log that contains `"Installation operation completed successfully`""
+        } Else {
+            Write-Host "AirWatch App has been successfully installed" `n -ForegroundColor Green
+        }
+
+        # Restart IIS to start AirWatch
+        Invoke-VMScript -ScriptText "iisreset" -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
+    }
+}
+
 Function Invoke-VMToolsCopy {
     param(
         [String] $vmName,
@@ -831,7 +881,7 @@ Function Invoke-StopServices {
             If ($session -is [System.Management.Automation.Runspaces.PSSession]) {
                 #Stop WS1 Services
                 Write-Host "Stopping Workspace ONE services on $serverfqdn via Powershell" -ForegroundColor Yellow
-                Invoke-Command -Session $Session -ScriptBlock { Get-Service bits,*airwatch* | Stop-Service -PassThru | Set-Service -StartupType Manual }
+                Invoke-Command -Session $Session -ScriptBlock { Get-Service GooglePlayS*,w3sv*,bits,*airwatch* | Stop-Service -PassThru | Set-Service -StartupType Manual }
                 #Disconnect from Windows Server
                 Remove-PSSession $Session }
             Else
@@ -850,13 +900,38 @@ Function Invoke-StopServices {
 
             #Stop WS1 Services
             Write-Host "Stopping Workspace ONE services on $serverName via VMTools" -ForegroundColor Yellow
-            Invoke-VMScript -ScriptText "Get-Service bits,*airwatch* | Stop-Service -PassThru | Set-Service -StartupType Manual" -GuestCredential $vcsession
+            Invoke-VMScript -ScriptText "Get-Service GooglePlayS*,w3sv*,bits,*airwatch* | Stop-Service -PassThru | Set-Service -StartupType Manual" -GuestCredential $vcsession
             #Disconnect from vCenter Server
             Disconnect-VIServer * -Force -Confirm:$false
         }
     }
 
     #$completedVMs += (Get-VM -Name $vmName)
+}
+
+function checkAirWatchService{
+	param(
+		[string]$vmName,
+		[String]$guestOsAccount,
+        [String]$guestOsPassword
+	)
+	# Check the VM is working
+    If(!(checkVM -vmName $vmName)){throw "Unable to find $vmName. The VM is either not in the inventory or VMTools is not responding"}
+	
+	# Validate the connection server is installed and running by checking the service is running on the destination VM using Get-Service
+	Write-Host "Waiting for the service to start on $vmName" -ForegroundColor Yellow
+	$checkStatusStatusTimeOut = (Get-Date).AddMinutes(1)
+	
+	While(($serviceStatus -ne "Running") -and ($checkStatusStatusTimeOut -gt (Get-Date))){
+		$serviceStatusOutput = Invoke-VMScript -ScriptText '(Get-Service | Where{$_.Name -eq "wsbroker"}).Status' -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -scripttype Powershell -ErrorAction SilentlyContinue
+		$serviceStatus = [string]$serviceStatusOutput.Trim()
+		[System.Threading.Thread]::Sleep(1000*10)
+		$Status = $False
+	}
+	If ($serviceStatus -eq "Running"){
+		$Status = $True
+	}
+	return $Status
 }
 
 Function Invoke-SnapshotVMs {
