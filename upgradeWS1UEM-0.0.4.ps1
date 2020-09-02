@@ -90,6 +90,7 @@ $SecdmzvCenter = $WS1Config.SecondaryDMZServers.vCenter.FQDN
 #Local Dirs
 $toolsDir = Join-Path -Path $current_path -ChildPath $WS1Config.globalConfig.deploymentDirectories.toolsDir
 $InstallerDir = Join-Path -Path $current_path -ChildPath $WS1Config.globalConfig.deploymentDirectories.InstallerDir
+$PrereqsDir = $WS1Config.globalConfig.deploymentDirectories.PrereqsDir
 $DBInstallerDir = $WS1Config.globalConfig.deploymentDirectories.DBInstallerDir
 $AppInstallerDir = $WS1Config.globalConfig.deploymentDirectories.AppInstallerDir
 #Remote Dirs
@@ -111,7 +112,6 @@ $Credential = $host.ui.PromptForCredential("Windows credentials", "Please enter 
 #$VCSecCred = $host.ui.PromptForCredential("Secondary site vC credentials", "Please enter your user name and password for the Secondary Site vCenter.", "", "NetBiosUserName")
 #$VCDMZSecCred = $host.ui.PromptForCredential("Secondary site DMZ vC credentials", "Please enter your user name and password for the Secondary Site DMZ vCenter.", "", "NetBiosUserName")
 
-
 Function Invoke-StageFiles {
     param(
         [Array] $vmArray,
@@ -128,9 +128,7 @@ Function Invoke-StageFiles {
         $vmFqdn = $vmArray[$i].FQDN
         $vmIP = $vmArray[$i].IP
         $vmRole = $vmArray[$i].Role
-        Write-Host "----------------------------------------------------------------------------"
-
-        #Write-Host "number of VM in the list " + [string]$vmArray[$i]
+        Write-Host "--------------------------STAGING--------------------------"
         # First try to copy WS1 files with PowerShell because it is much faster. If this fails, use VMTools.
         $connectby = Invoke-CheckVMConnectivity -vmName $vmName -vmFqdn $vmFqdn -vmIP $vmIP -stagevCenter $stagevCenter
         if($connectby -eq "WinRMFQDN") {
@@ -138,53 +136,11 @@ Function Invoke-StageFiles {
         elseif ($connectby -eq "WinRMIP") {
             Invoke-PSCopy -vmName $vmName -vmIP $vmIP -vmRole $vmRole}
         elseif ($connectby -eq "VMTOOLS") {
-            Invoke-VMToolsCopy -vmName $vmName -vmFqdn $vmFqdn -vmRole $vmRole -stagevCenter $stagevCenter
+            Invoke-VMToolsCopy -vmName $vmName -vmFqdn $vmFqdn -vmRole $vmRole -stagevCenter $stagevCenter}
+        else {
+            Write-Host "Can't connect to $vmName over the network or VMTools. Please Stage files manually." -ForegroundColor Red
         }
 
-        If ( ! (Invoke-CheckVMNetwork $vmFqdn)) {
-        
-            Write-Host "Can't connect to the $vmFqdn over the network." -ForegroundColor Yellow
-            write-host "Will try using VMTools to copy the files" -ForegroundColor Yellow
-            Write-Host `n
-    
-            If ( ! (Invoke-VMToolsCopy -vmName $vmName -vmFqdn $vmFqdn -stagevCenter $stagevCenter)) {
-                Write-Error "$vmName VMTools is not responding on $vmName!! Can't stage files to this VM.";Continue
-            }
-            Else {
-                Write-Host "Copied installers to $vmName with VMTools.";Continue
-            }
-        }
-        Else {
-
-            If ( ! (Invoke-enablePSRemoting $vmName $stagevCenter)) {
-                Write-Host "$vmName is on the network, but can't enable PS Remoting. Trying VMTools Copy" -ForegroundColor Yellow
-
-                If ( ! (Invoke-VMToolsCopy -vmName $vmName -vmFqdn $vmFqdn -stagevCenter $stagevCenter)) {
-                    Write-Error "$vmName VMTools is not responding on $vmName!! Can't stage files to this VM.";Continue
-                }
-                Else {
-                    Write-Host "Copied installers to $vmName with VMTools.";Continue
-                }
-            }
-            Else {
-                Write-Host "Powershell Remoting enabled on $vmName. Trying powershell copy." -ForegroundColor Yellow
-                
-                If ( ! (Invoke-PSCopy -vmName $vmName -vmFqdn $vmFqdn)) {
-
-                    Write-Host "Couldn't establish a Powershell session. Failing back to VMTools copy process" -ForegroundColor Yellow
-                    If ( ! (Invoke-VMToolsCopy -vmName $vmName -vmFqdn $vmFqdn -stagevCenter $stagevCenter)) {
-                        Write-Error "$vmName VMTools is not responding on $vmName!! Can't stage files to this VM.";Continue
-                    }
-                    Else {
-                        Write-Host "Copied installers to $vmName with VMTools.";Continue
-                    }
-                    
-                }
-                Else {
-                    Write-Host "Copied installers to $vmName with Powershell.";Continue
-                }
-            }
-        }        
         If ($i -eq $vmArray.Count) {
             #Done
             Write-Host "Completed staging Install files for $vmName" `n -ForegroundColor Yellow
@@ -195,6 +151,53 @@ Function Invoke-StageFiles {
     }
 }
 
+function UpgradeAirWatchDb{
+    param(
+        [String]$guestOsAccount,
+        [String]$guestOsPassword,
+        [String]$vmName
+    )
+
+    # Script Block to test network communication from CN server to DB server
+    $dbAvailable = @"
+        # Check if network is accessible
+        Write-Host "Testing $IS_SQLSERVER_SERVER SQL server connection from $vmName"
+        if(Test-Connection -ComputerName $IS_SQLSERVER_SERVER -Count 1 -Quiet -ErrorAction SilentlyContinue){
+            `$dbAvailable = `$true	
+            return `$dbAvailable
+        } else {
+            `$dbAvailable = `$false
+            Write-Host "Unable to reach $IS_SQLSERVER_SERVER over the network!"
+            return `$dbAvailable
+        }
+"@
+
+    $dbSetupSuccessfullyCmd = @"
+    Get-Item -Path $deploymentDestinationDirectory\AirWatch_Database_Publish.log | Select-String -Pattern "Update complete"
+"@
+    
+    # Test DB network connectivity and stop execution if it can't be contacted over the network.
+    $dbCheck = Invoke-VMScript -ScriptText $dbAvailable -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
+    If(! $dbCheck){
+        throw "The AirWatch DB is not accessible over the network from $vmName"
+    }
+
+    Write-Host "`nInstalling AirWatch DB. This may take a while." `n -ForegroundColor Yellow
+	
+	# Run the command to install the AirWatch DB  
+    $installDbScriptBlock = [scriptblock]::Create("CMD /C $airwatchDbInstallDestinationPath /s /V`"/qn /lie $deploymentDestinationDirectory\AirWatch_Database_InstallLog.log AWPUBLISHLOGPATH=$deploymentDestinationDirectory\AirWatch_Database_Publish.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR  IS_SQLSERVER_AUTHENTICATION=$IS_SQLSERVER_AUTHENTICATION IS_SQLSERVER_SERVER=$IS_SQLSERVER_SERVER IS_SQLSERVER_USERNAME=$IS_SQLSERVER_USERNAME IS_SQLSERVER_PASSWORD=$IS_SQLSERVER_PASSWORD IS_SQLSERVER_DATABASE=$IS_SQLSERVER_DATABASE`"")
+
+    Invoke-VMScript -ScriptText $installDbScriptBlock -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
+
+	#Check the install worked by looking for this line in the publish log file - "Updating database (Complete)"
+    $dbSetupSuccessfully = Invoke-VMScript -ScriptText $dbSetupSuccessfullyCmd -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
+    If($dbSetupSuccessfully -notlike "Update complete"){
+        throw "Failed to setup database. Could not find a line in the Publish log that contains `"Update complete`""
+    } Else {
+        Write-Host "AirWatch database has been successfully installed" `n -ForegroundColor Green
+    }
+}
+
 function Invoke-InstallPrereqs {
     param(
         [String]$guestOsAccount,
@@ -202,16 +205,10 @@ function Invoke-InstallPrereqs {
         [switch]$installPfxFile,
         [string]$commonName,
         [array]$vmArray,
-        [Switch]$dbInstall,
-        [Parameter(ParameterSetName='CN_Install')]
-        [Switch]$cnInstall,
-        [Parameter(ParameterSetName='DS_Install')]
-        [Switch]$dsInstall,
-        [Parameter(ParameterSetName='API_Install')]
-        [Switch]$apiInstall
+        [String] $stagevCenter
     )
 
-    $completedVMs = @()
+    #$completedVMs = @()
 
     for($i = 0; $i -lt $vmArray.count; $i++){
         #Skip null or empty properties.
@@ -219,17 +216,32 @@ function Invoke-InstallPrereqs {
         
         $vmName = $vmArray[$i].Name
         $vmFqdn = $vmArray[$i].FQDN
+        $vmRole = $vmArray[$i].Role
 
-        If( ! (checkVmTools $vmName)){
+<#         If( ! (checkVmTools $vmName)){
             Write-Error "$vmName VMTools is not responding on $vmName!!"
             break
         }
 
-        $completedVMs += (Get-VM -Name $vmName)
+        $completedVMs += (Get-VM -Name $vmName) #>
 
-        Write-Host "Starting the prerequisite install for $vmName" `n -ForegroundColor Yellow
+        Write-Host "--------------------------PREREQS--------------------------"
+        # First try to copy WS1 files with PowerShell because it is much faster. If this fails, use VMTools.
+        $connectby = Invoke-CheckVMConnectivity -vmName $vmName -vmFqdn $vmFqdn -vmIP $vmIP -stagevCenter $stagevCenter
+<#         if($connectby -eq "WinRMFQDN") {
+            Invoke-PSCopy -vmName $vmName -vmFqdn $vmFqdn -vmRole $vmRole}
+        elseif ($connectby -eq "WinRMIP") {
+            Invoke-PSCopy -vmName $vmName -vmIP $vmIP -vmRole $vmRole}
+        elseif ($connectby -eq "VMTOOLS") {
+            Invoke-VMToolsCopy -vmName $vmName -vmFqdn $vmFqdn -vmRole $vmRole -stagevCenter $stagevCenter}
+        else {
+            Write-Host "Can't connect to $vmName over the network or VMTools. Please Stage files manually." -ForegroundColor Red
+        } #>
+        if ($connectby -eq "NOVM" -Or $connectby -eq "NOVMTOOLS") {
+            Write-Host "Can't connect to $vmName over the network or VMTools. Please install prereqs manually." -ForegroundColor Red
+        }
 
-# The AirWatch DS server required an external trusted SSL certificate to be used
+        # The AirWatch DS server required an external trusted SSL certificate to be used
 $importPfxScript = @"
 CertUtil -f -p "$pfxPassword" -importpfx "$pfxDestinationFilePath"
 "@
@@ -265,8 +277,19 @@ $dwordValue = "180000"
 New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type DWORD -Force | Out-Null
 '@
 
-        
+        If($cnInstall){
+            Copy-VMGuestfile -LocalToGuest -source $cnConfigXmlPath -destination $destinationConfigFilesDirectory -Force:$true -vm $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
+        }
+        If($dsInstall){
+            Copy-VMGuestfile -LocalToGuest -source $dsConfigXmlPath -destination $destinationConfigFilesDirectory -Force:$true -vm $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
+        }
+        If($apiInstall){    
+            Copy-VMGuestfile -LocalToGuest -source $apiConfigXmlPath -destination $destinationConfigFilesDirectory -Force:$true -vm $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
+        }
+
         $dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath /q /norestart`""
+        $JavaInstallCMD = "CMD /C `"jre-8u261-windows-x64.exe INSTALL_SILENT=Enable SPONSORS=0`""
+        
         $createDestinationDirectoryCMD = "If(!(Test-Path -Path $deploymentDestinationDirectory)){New-Item -Path $deploymentDestinationDirectory -ItemType Directory | Out-Null}"
         $createDestinationConfigDirectoryCMD = "If(!(Test-Path -Path $destinationConfigFilesDirectory)){New-Item -Path $destinationConfigFilesDirectory -ItemType Directory | Out-Null}"
 
@@ -303,6 +326,10 @@ New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type D
         # Run the .NET install CMD
         Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
         Invoke-VMScript -ScriptText $dotNetInstallCMD -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType powershell
+        
+        # Run the Java install CMD
+        Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
+        Invoke-VMScript -ScriptText $JavaInstallCMD -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType powershell
         
         # First try to copy AirWatch files with PowerShell because it is much faster. If this fails, use VMTools.
         If(checkVMNetwork $vmFqdn){
@@ -412,6 +439,30 @@ function Invoke-InstallPhase1 {
 
         # Restart IIS to start AirWatch
         Invoke-VMScript -ScriptText "iisreset" -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
+
+            <# If($installCn){ 
+        # Snapshot the CN VMs before starting the install
+        snapshotVMs -vmArray $airwatchCnServers -snapshotName "Installing AirWatch"
+    
+        # Start the AirWatch prerequisite installs on the CN Servers
+        installAirWatchPrereqs -vmArray $airwatchCnServers -commonName $airwatchCnCommonName -guestOsAccount $localDomainAdminUser -guestOsPassword $localDomainAdminPassword -cnInstall
+        waitForVMs -vmArray $airwatchCnServers
+    }
+    
+    If($installDb){
+        # Install the AirWatch DB from the first CN Server
+        InstallAirWatchDb -vmName $dbInstallVM -guestOsAccount $localDomainAdminUser -guestOsPassword $localDomainAdminPassword    
+    }
+    
+    If($installCn){    
+        Write-Host "Install the AirWatch CN Servers in the internal environment" `n -ForegroundColor Yellow
+    
+        # Install AirWatch on the CN Servers.
+        InstallAirwatch -vmArray $airwatchCnServers -guestOsAccount $localDomainAdminUser -guestOsPassword $localDomainAdminPassword -CnInstall
+        
+        # Check the install was successfull by use the Web API to see if it responds before continuing
+        Check-Web -URL $cnUrl
+    } #>
     }
 }
 
@@ -589,11 +640,20 @@ Function Invoke-VMToolsCopy {
 Function Invoke-PSCopy {
     param(
         [String] $vmName,
-        [String] $vmFqdn
+        [String] $vmFqdn,
+        [String] $vmRole,
+        [Switch] $dbInstall,
+        [Parameter(ParameterSetName='CN_Install')]
+        [Switch] $cnInstall,
+        [Parameter(ParameterSetName='DS_Install')]
+        [Switch] $dsInstall,
+        [Parameter(ParameterSetName='API_Install')]
+        [Switch] $apiInstall
     )
 
     $Session = Invoke-CreatePsSession -ServerFqdn $vmFqdn
-            
+
+
     #Check if we can connect via Powershell
     If ( $Session -is [System.Management.Automation.Runspaces.PSSession] ) {
         Write-Host "Using PowerShell remote session to copy files to $vmName" -ForegroundColor Yellow
@@ -687,16 +747,20 @@ function Invoke-CheckVMConnectivity{
 	) 
     #called by other functions before their action - eg Pre-req,Staging,Phase1 Install, Phase 2 DB cmds, Phase App cmds
     # Check if PSRemoting is enabled and functional
+    if((Test-NetConnection -ComputerName $Computer -Port 5986).TcpTestSucceeded -eq $true)
+				{
+                        $result.stdout += "WinRM enabled successfully.`n"}
+                        
     if (Test-WsMan -ComputerName $vmFqdn -Credential $Credential) {
         Write-Host "Connected to $vmFqdn over the network!" `n -ForegroundColor Green
 		$connection = "WinRMFQDN"}
     elseif (Test-WsMan -ComputerName $vmIP -Credential $Credential){ 
         Write-Host "Connected to $vmName ($vmIP) via IP over the network!" `n -ForegroundColor Green
         $connection = "WinRMIP"} 
-    elseif (Test-Connection -TargetName $vmFqdn -Count 2 -Quiet) {
+    elseif (Test-Connection -TargetName $vmFqdn -Count 1 -Quiet) {
         Write-Host "$vmFqdn responding via IP on the network!" `n -ForegroundColor Yellow
         $connection = "FQDN"}
-    elseif (Test-Connection -TargetName $vmIP -Count 2 -Quiet) {
+    elseif (Test-Connection -TargetName $vmIP -Count 1 -Quiet) {
         Write-Host "$vmName ($vmIP) responding via IP on the network!" `n -ForegroundColor Yellow
         $connection = "IP"}
     else {
@@ -990,6 +1054,216 @@ Remove-OSCustomizationSpec $OSCusSpec -Confirm
 
         #Disconnect from vCenter Server
         Disconnect-VIServer * -Force -Confirm:$false
+
+        # If the AirWatch VMs are set to $true, Clone the VMs
+If($deployAirWatch){
+    Write-Host "Deploying AirWatch CN VMs" `n -ForegroundColor Yellow
+    # Use Start-Job to deploy VM groups in parallel
+    createVmFolders -vmFolders $vmFolders.airwatch -datacenterName $mgmtDatacenterName
+    cloneVMs -vmArray $airwatchCnServers -vmFolder $vmFolders.airwatch -network $mgmtNetwork -clusterName $mgmtClusterName -datastoreName $mgmtDatastoreName -ramGB $airwatchCnRamGb -numCPU $airwatchCnNumCpu
+    newAffinityRule -ruleName $airwatchCnAffinityRuleName -cluster $mgmtClusterName -vmArray $airwatchCnServers
+    addLocalAdmin -guestOsAccount $localDomainAdminUser -guestOsPassword $localDomainAdminPassword -serviceAccount $airwatchServiceAccountName -domainName $domainName -vmArray $airwatchCnServers
+    If($requestAirWatchSslCert){
+        Write-Host "Requesting CA signed SSL Certificates for the AirWatch CS VMs" `n -ForegroundColor Yellow
+        requestCaCerts -commonName $airwatchCnCommonName -friendlyName $airwatchCnFriendlyName -templatename $airwatchTemplateName -vmArray $airwatchCnServers -guestOsAccount $localDomainAdminUser -guestOsPassword $localDomainAdminPassword
+    }
+}
+
+Disconnect-VIServer * -Force -Confirm:$false
+
+# Connect to DMZ vCenter Servers
+if($global:defaultVIServers.Name -notcontains $dmzvCenterName){
+    Connect-VIServer -Server $dmzvCenterName -User $dmzvCenterAccount -Password $dmzvCenterPassword -Force | Out-Null
+}
+if($global:defaultVIServers.Name -contains $dmzvCenterName){
+    Write-Host "Successfully connected to $dmzvCenterName" -ForegroundColor Green `n
+} Else {
+    Write-Error "Unable to connect to Management vCenter Server"
+}
+
+# If the AirWatch VMs are set to $true, Clone the VMs
+If($deployAirWatch){
+    Write-Host "Deploying AirWatch DS VMs" `n -ForegroundColor Yellow
+    # Use Start-Job to deploy VM groups in parallel
+    createVmFolders -vmFolders $vmFolders.airwatch -datacenterName $dmzDatacenterName
+    cloneVMs -vmArray $airwatchDsServers -vmFolder $vmFolders.airwatch -network $dmzInternetNetwork -clusterName $dmzClusterName -datastoreName $dmzDatastoreName -ramGB $airwatchDsRamGb -numCPU $airwatchDsNumCpu
+    newAffinityRule -ruleName $airwatchDsAffinityRuleName -cluster $dmzClusterName -vmArray $airwatchDsServers
+    # If a local admin account is not configured (because the DMZ VM isn't on a domain) this will still run anyway. 
+
+    addLocalAdmin -guestOsAccount $localDomainAdminUser -guestOsPassword $localDomainAdminPassword -serviceAccount $airwatchServiceAccountName -domainName $domainName -vmArray $airwatchDsServers
+}
+
+    }
+}
+
+function cloneVMs {
+    param(
+        [Array]$vmArray,
+        [String]$vmFolder,
+        [Array]$network,
+        [String]$clusterName,
+        [String]$datastoreName,
+        [Int]$ramGB,
+        [Int]$numCPU
+    )
+
+    $newVmArray = @()
+
+    for($i = 0; $i -lt $vmArray.count; $i++){
+        #Skip null or empty properties.
+        If ([string]::IsNullOrEmpty($vmArray[$i].Name)){Continue}
+        
+        # Guest Customization
+        $vmName = $vmArray[$i].Name
+        $ipAddress = If($vmArray[$i].IP){$vmArray[$i].IP} Else {Write-Error "$vmName IP not set"}
+        $osCustomizationSpecName = "$vmName-CustomizationSpec"
+        $subnetmask = $network.netmask
+        $gateway = $network.gateway
+        $networkPortGroup = Get-VDPortgroup -Name $network.name
+
+        Write-Host "Now provisioning $vmName" -BackgroundColor Blue -ForegroundColor Black `n
+        
+        # Check if VM already exists in vCenter. If it does, skip to the next VM
+        If(Get-VM -Name $vmName -ErrorAction Ignore){
+            Write-Host "$vmName already exists. Moving on to next VM" -ForegroundColor Yellow `n
+            $newVM = $false
+            Continue
+        } Else {
+            $newVM = $true
+        }
+    
+        # If a Guest Customization with the same name already exists then we will remove it. This will make sure that we get the correct settings applied to the VM
+        If(Get-OSCustomizationSpec -Name $osCustomizationSpecName -ErrorAction Ignore){
+            Remove-OSCustomizationSpec -OSCustomizationSpec $osCustomizationSpecName -Confirm:$false
+        }
+        
+        # Create a new Guest Customization for each VM so that we can configure each OS with the correct details like a static IP    
+        New-OSCustomizationSpec -Name $osCustomizationSpecName -Type NonPersistent -OrgName $orgName -OSType Windows -ChangeSid -DnsServer $dnsServer -DnsSuffix $domainName -AdminPassword $localDomainAdminPassword -TimeZone $timeZone -Domain $domainName -DomainUsername $domainJoinUser -DomainPassword $domainJoinPassword -ProductKey $windowsLicenseKey -NamingScheme fixed -NamingPrefix $vmName -LicenseMode Perserver -LicenseMaxConnections 5 -FullName $fullAdministratorName | Out-Null
+        Get-OSCustomizationSpec -Name $osCustomizationSpecName | Get-OSCustomizationNicMapping | Set-OSCustomizationNicMapping -IpMode UseStaticIP -IpAddress $ipAddress -SubnetMask $subnetMask -DefaultGateway $gateway -Dns $dnsServer | Out-Null
+        
+        If(Get-OSCustomizationSpec -Name $osCustomizationSpecName -ErrorAction Ignore){
+            Write-Host "$osCustomizationSpecName profile has been created for $vmName" -ForegroundColor Green `n
+        } Else {
+            Write-Host "$osCustomizationSpecName failed to create for $vmName" -ForegroundColor Red `n
+        }
+    
+        # For testing purposes Linked Clones can be used. For Production full clones must be used. 
+        If($deployLinkedClones){
+            Write-Host "Deploying $vmName as a Linked Clone VM"
+            New-VM -LinkedClone -ReferenceSnapshot $referenceSnapshot -Name $vmName -ResourcePool $clusterName -Location $vmFolder -Datastore $datastoreName -OSCustomizationSpec $osCustomizationSpecName -DiskStorageFormat $diskFormat -VM $referenceVmName -ErrorAction Stop | Out-Null
+            If(Get-VM -Name $vmName -ErrorAction Ignore){
+                Write-Host "$vmName has been provisioned as a Linked Clone VM" -ForegroundColor Green `n
+            }
+        } Else {
+            Write-Host "Deploying $vmName as a full clone VM" -ForegroundColor Green `n
+            New-VM -Name $vmName -Datastore $datastoreName -DiskStorageFormat $diskFormat -OSCustomizationSpec $osCustomizationSpecName -Location $vmFolder -VM $referenceVmName -ResourcePool $clusterName | Out-Null
+            If(Get-VM -Name $vmName -ErrorAction Ignore){
+                Write-Host "$vmName has been provisioned as a Full Clone VM" -ForegroundColor Green `n
+            }
+        }
+    
+        # Adding each VM to an array of VM Objects that can be used for bulk modifications.
+        If($newVM){    
+            If(Get-VM -Name $vmName){
+                $newVmArray += (Get-VM -Name $vmName)
+            } Else {
+                Write-Error "$vmName failed to be created, it may already exist."
+                Continue
+            }
+        }
+
+        # After the VM is cloned, wait 1 sec (without displaying a sleep timer) before making changes to the VM.
+        [System.Threading.Thread]::Sleep(1000)
+
+        #Make sure the new server is provisioned to the correct network/portgroup and set to "Connected"
+        Write-Host "Changing network of VM to $($networkPortGroup.Name)"
+        $networkAdapter = Get-VM $vmName | Get-NetworkAdapter -Name "Network adapter 1"
+        Set-NetworkAdapter -NetworkAdapter $networkAdapter -Portgroup $networkPortGroup -Confirm:$false
+        Set-NetworkAdapter -NetworkAdapter $networkAdapter -StartConnected:$true -Confirm:$false
+
+        # Reconfigure the VM with the correct CPU and RAM
+        Get-VM -Name $vmName | Set-VM -MemoryGB $ramGB -NumCpu $numCPU -confirm:$false
+
+        # Power on the VMs after they are cloned so that the Guest Customizations can be applied
+        Start-VM -VM $vmName -Confirm:$false | Out-Null
+        Write-Host "Powering on $vmName VM" -ForegroundColor Yellow `n
+
+        # After the VM has started, confirm the network adapter is connected
+        Set-NetworkAdapter -NetworkAdapter $networkAdapter -Connected:$true -Confirm:$false
+    }
+
+    # Wait for a while to ensre the OS Guest Customization is compute and VMTools has started
+    If($newVmArray){
+        Write-Host "`nPausing the script while we wait until the VMs are ready to execute in-guest operations." -ForegroundColor Yellow
+        Write-Host "This will take up to 5 minutes for Guest Opimization to complete and VMTools is ready.  " `n -ForegroundColor Yellow
+        Start-Sleep -Seconds (60*5)
+    } Else {
+        Write-Host "No new VMs were created..." `n -ForegroundColor Yellow
+    }
+
+    # Check the newly provisioned VMs exist and wait for VMTools to respond
+    for($i = 0; $i -lt 5; $i++){
+        foreach($VM in $newVmArray){
+            If(checkVM -vmName $VM){
+                # If the VM is responding them remove it from the array so it doesn't get checked again.
+                $newVmArray = $newVmArray | Where-Object {$_ -ne $VM}
+            }
+        }
+        If(! $newVmArray){Break}
+        Write-Host "$($newVmArray -join ", ") are not responding. Wait 1 minute and try again...." `n -ForegroundColor Yellow
+        Start-Sleep 60
+    }
+}
+function newAffinityRule{
+    param(
+        [String]$ruleName,
+        [String]$cluster,
+        [array]$vmArray
+    )
+
+    $vmObjectArray = @()
+    for($i = 0; $i -lt $vmArray.count; $i++){
+        #Skip null or empty properties.
+        If ([string]::IsNullOrEmpty($vmArray[$i].Name)){Continue}
+        $vmObjectArray += (Get-VM -Name $vmArray[$i].Name)
+    }
+
+    if(!(Get-DrsRule -Cluster $cluster -Name $ruleName -ErrorAction Ignore)){
+        If($vmArray){ 
+            New-DrsRule -Name $ruleName -Cluster $cluster -VM $vmObjectArray -KeepTogether $false -Enabled $true | Out-Null
+        }
+        if(Get-DrsRule -Cluster $cluster -Name $ruleName -ErrorAction Ignore){
+            Write-Host "Created a DRS anti-affinity rule for the Connection Servers: $ruleName" -ForegroundColor Green `n
+        } Else {
+            Write-Error "Failed to create DRS anti-affinity rule!" `n
+        }
+    } Else {
+        Write-Error "Affinity rule name already exists!"
+    }
+}
+function addLocalAdmin{
+    param(
+        [String]$guestOsAccount,
+        [String]$guestOsPassword,
+        [String]$serviceAccount,
+        [String]$domainName,
+        [array]$vmArray
+    )
+
+    for($i = 0; $i -lt $vmArray.count; $i++){
+        #Skip null or empty properties.
+        If ([string]::IsNullOrEmpty($vmArray[$i].Name)){Continue}
+       
+        $vmName = $vmArray[$i].Name
+
+$addAdminScriptText = @"
+`$localAdminGroup = [ADSI]"WinNT://$vmName/Administrators,group"
+`$userName = [ADSI]"WinNT://$domainName/$serviceAccount,user"
+`$localAdminGroup.Add(`$userName.Path)
+"@
+        Write-Host "Adding $serviceAccount to the local Administrator group on $vmName" `n -ForegroundColor Yellow
+        $Output = Invoke-VMScript -ScriptText $addAdminScriptText -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
+        $Output | Select-Object -ExpandProperty ScriptOutput
     }
 }
 
