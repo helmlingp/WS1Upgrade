@@ -103,10 +103,10 @@ $pfxPassword = $WS1Config.globalConfig.sslCertificates.airwatch.pfxPassword
 $pfxCommonName = $WS1Config.globalConfig.sslCertificates.airwatch.pfxCommonName
 
 # Import arrays of VMs to deploy
-$priAppServers = $WS1Config.PrimaryWorkloadServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM")}
-$secAppServers = $WS1Config.SecondaryWorkloadServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM")}
-$priDMZAppServers = $WS1Config.PrimaryDMZServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM")}
-$secDMZAppServers = $WS1Config.SecondaryDMZServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM")}
+$priAppServers = $WS1Config.PrimaryWorkloadServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM") -and ($_.Role -ne "AWCM")}
+$secAppServers = $WS1Config.SecondaryWorkloadServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM") -and ($_.Role -ne "AWCM")}
+$priDMZAppServers = $WS1Config.PrimaryDMZServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM") -and ($_.Role -ne "AWCM")}
+$secDMZAppServers = $WS1Config.SecondaryDMZServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM") -and ($_.Role -ne "AWCM")}
 $PriDBServers = $WS1Config.PrimaryWorkloadServers.servers | Where-Object {$_.Role -like "DB"}
 $secDBServers = $WS1Config.SecondaryWorkloadServers.servers | Where-Object {$_.Role -like "DB"}
 $URLs = $WS1Config.PrimaryWorkloadServers.URLs
@@ -118,7 +118,8 @@ Function Invoke-StageFiles {
     param(
         [Array] $vmArray,
         [String] $stagevCenter
-    
+    )
+
     For ($i = 0; $i -lt $vmArray.count; $i++) {
         #Skip null or empty properties.
         If ([string]::IsNullOrEmpty($vmArray[$i].Name)) { Continue }
@@ -313,12 +314,14 @@ New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type D
             Write-Host "Running the AirWatch prequisite installation script on $vmName" `n -ForegroundColor Green
             Invoke-VMScript -ScriptText $airwatchPreRequisitesScript -VM $vmName -GuestCredential $Credential -ScriptType powershell
             # Run the .NET install CMD
-            $dotNetDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include ndp48*.exe -Recurse -ErrorAction SilentlyContinue}
+            $dotNetDestinationPathcmd = "Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include ndp48*.exe -Recurse -ErrorAction SilentlyContinue}"
+            $dotNetDestinationPath = Invoke-VMScript -ScriptText $dotNetDestinationPathcmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
             $dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath /q /norestart`""
             Write-Host "Install .Net on $vmName" `n -ForegroundColor Green
             Invoke-VMScript -ScriptText $dotNetInstallCMD -VM $vmName -GuestCredential $Credential -ScriptType powershell
             # Run the Java install CMD
-            $javaDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include jre*.exe -Recurse -ErrorAction SilentlyContinue}
+            $javaDestinationPathcmd = "Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include jre*.exe -Recurse -ErrorAction SilentlyContinue}"
+            $javaDestinationPath = Invoke-VMScript -ScriptText $javaDestinationPathcmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
             $JavaInstallCMD = "CMD /C `"$javaDestinationPath INSTALL_SILENT=Enable SPONSORS=0`""
             Write-Host "Installing Java on $vmName" `n -ForegroundColor Green
             Invoke-VMScript -ScriptText $JavaInstallCMD -VM $vmName -GuestCredential $Credential -ScriptType powershell
@@ -341,13 +344,88 @@ New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type D
 
 function Invoke-InstallPhase1 {
     param(
-
         [array]$vmArray,
         [String] $stagevCenter
     )
 
-    $awSetupSuccessfullyCmd = @"
-    Get-Item -Path $destinationDir\AppInstall.log | Select-String -Pattern "Installation operation completed successfully"
+    for($i = 0; $i -lt $vmArray.count; $i++){ 
+        #Skip null or empty properties.
+        If ([string]::IsNullOrEmpty($vmArray[$i].Name)){Continue}
+        $vmName = $vmArray[$i].Name
+        $vmFqdn = $vmArray[$i].FQDN
+        $vmIP = $vmArray[$i].IP
+        $vmRole = $vmArray[$i].Role
+        
+	    Write-Host "--------------------------PREREQS--------------------------" `n -ForegroundColor Yellow
+        $destprereqsDir = $destinationDir + "\" + $InstallerDir + "\" + $configDir
+        $ConfigFile = $vmRole + "_ConfigScript.xml"
+        $AppInstallDestBinary = $destinationDir + "\" + $InstallerDir + "\" + $AppInstallerDir
+
+$installAppScriptBlock = @"
+CMD /C #AppInstallDestBinary# /s /V`"/qn /lie $destinationDir\AppInstall.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$ConfigFile`"
+"@
+
+        $connectby = Invoke-CheckVMConnectivity -vmName $vmName -vmFqdn $vmFqdn -vmIP $vmIP -stagevCenter $stagevCenter
+        if($connectby -eq "WinRMFQDN") {
+            $Session = Invoke-CreatePsSession -ServerFqdn $vmFqdn
+        } elseif ($connectby -eq "WinRMIP") {
+            $Session = Invoke-CreatePsSession -ServerFqdn $vmIP
+        }
+
+        if($connectby -eq "WinRMFQDN" -Or $connectby -eq "WinRMIP") {
+            # Run the command to install the AirWatch App  
+            $installAppDestPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:AppInstallDestBinary -Include WorkspaceONE_UEM_Application*.exe -Recurse -ErrorAction SilentlyContinue}
+            $updinstallAppScriptBlock = $installAppScriptBlock -replace "#AppInstallDestBinary#", $installAppDestPath
+            Invoke-Command -Session $Session -ScriptBlock $installAppScriptBlock 
+            #Check the install worked by looking for this line in the publish log file - "Updating database (Complete)"
+            $awSetupSuccessfully = Invoke-Command -Session $Session -ScriptBlock $awSetupSuccessfullyCmd
+            If($awSetupSuccessfully -notlike "*Installation operation completed successfully*"){
+                #throw "Failed to setup AirWatch App. Could not find a line in the Publish log that contains `"Installation operation completed successfully`""
+            } Else {
+                Write-Host "WS1 AppServer has been successfully installed on $vmName" `n -ForegroundColor Green
+            }
+            # Restart IIS to start AirWatch
+            Invoke-Command -Session $Session -ScriptBlock {iisreset}
+        } elseif ($connectby -eq "VMTOOLS") {
+            # Run the command to install the AirWatch App
+            $installAppDestPathcmd = "Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:AppInstallDestBinary -Include WorkspaceONE_UEM_Application*.exe -Recurse -ErrorAction SilentlyContinue}"
+            $installAppDestPath = Invoke-VMScript -ScriptText $dotNetDestinationPathcmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
+            $updinstallAppScriptBlock = $installAppScriptBlock -replace "#AppInstallDestBinary#", $installAppDestPath
+            Invoke-VMScript -ScriptText $updinstallAppScriptBlock -VM $vmName -GuestCredential $Credential -ScriptType powershell
+            #Check the install worked by looking for this line in the publish log file - "Updating database (Complete)"
+            $awSetupSuccessfully = Invoke-VMScript -ScriptText $awSetupSuccessfullyCmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
+            If($awSetupSuccessfully -notlike "*Installation operation completed successfully*"){
+                #throw "Failed to setup AirWatch App. Could not find a line in the Publish log that contains `"Installation operation completed successfully`""
+            } Else {
+                Write-Host "WS1 AppServer has been successfully installed on $vmName" `n -ForegroundColor Green
+            }
+
+            #Copy SQL Scripts in Application installer directory to SQL Server via this machine
+            $CopytoSQLServer = New-Item -Path $current_path + "\" + "CopytoSQLServer" -ItemType Directory -Force
+            $sqlscriptsDestPathcmd = "Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:AppInstallDestBinary -Include *.sql -Recurse -ErrorAction SilentlyContinue}"
+            $sqlscriptsDestPath = Invoke-VMScript -ScriptText $sqlscriptsDestPathcmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
+            Copy-VMGuestFile -Source $sqlscriptsDestPath -Destination $CopytoSQLServer -VM myVM -GuestToLocal -GuestCredential $Credential
+            Write-Host "Important:" `n -ForegroundColor Yellow
+            Write-Host "Please Copy the SQL script files (*.sql) in the $CopytoSQLServer folder to the SQL Server." `n -ForegroundColor Yellow
+            Write-Host "Run these scripts once against the WS1 database AFTER database upgrade!" `n -ForegroundColor Yellow
+
+            # Restart IIS to start AirWatch
+            Invoke-VMScript -ScriptText "iisreset" -VM $vmName -GuestCredential $Credential -ScriptType powershell
+
+        } else {
+            Write-Host "Cannot Connect to Server $vmName to do Phase 1 Install" `n -ForegroundColor Red
+        }
+    }
+}
+
+function Invoke-InstallPhase2 {
+    param(
+        [array]$vmArray,
+        [String] $stagevCenter
+    )
+
+$awSetupSuccessfullyCmd = @"
+Get-Item -Path $destinationDir\AppInstall.log | Select-String -Pattern "Installation operation completed successfully"
 "@
 
     for($i = 0; $i -lt $vmArray.count; $i++){ 
@@ -362,88 +440,31 @@ function Invoke-InstallPhase1 {
         $destprereqsDir = $destinationDir + "\" + $InstallerDir + "\" + $configDir
         $ConfigFile = $vmRole + "_ConfigScript.xml"
 
-        $connectby = Invoke-CheckVMConnectivity -vmName $vmName -vmFqdn $vmFqdn -vmIP $vmIP -stagevCenter $stagevCenter
-        if($connectby -eq "WinRMFQDN") {
+#need to copy sql files from app server to sql server and have DBA run them
 
-        } elseif ($connectby -eq "WinRMIP") {
 
-        } elseif ($connectby -eq "VMTOOLS") {
-            # Run the command to install the AirWatch App  
-            $installAppScriptBlock = [scriptblock]::Create("CMD /C $airwatchAppInstallDestinationBinary /s /V`"/qn /lie $destinationDir\AppInstall.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$ConfigFile`"")
-            Invoke-VMScript -ScriptText $installAppScriptBlock -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
-
-            #Check the install worked by looking for this line in the publish log file - "Updating database (Complete)"
-            $awSetupSuccessfully = Invoke-VMScript -ScriptText $awSetupSuccessfullyCmd -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
-            If($awSetupSuccessfully -notlike "*Installation operation completed successfully*"){
-                #throw "Failed to setup AirWatch App. Could not find a line in the Publish log that contains `"Installation operation completed successfully`""
-            } Else {
-                Write-Host "AirWatch App has been successfully installed" `n -ForegroundColor Green
-            }
-
-            # Restart IIS to start AirWatch
-            Invoke-VMScript -ScriptText "iisreset" -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
-
-            <#    
-            If($installCn){    
-            Write-Host "Install the AirWatch CN Servers in the internal environment" `n -ForegroundColor Yellow
-        
-            # Install AirWatch on the CN Servers.
-            InstallAirwatch -vmArray $airwatchCnServers -guestOsAccount $localDomainAdminUser -guestOsPassword $localDomainAdminPassword -CnInstall
-            
-            # Check the install was successfull by use the Web API to see if it responds before continuing
-            Check-Web -URL $cnUrl
-            #>
-        }
-    }
-}
-
-function Invoke-InstallPhase2 {
-    param(
-        [String]$guestOsAccount,
-        [String]$guestOsPassword,
-        [Array]$vmArray,
-        [Parameter(ParameterSetName='CN_Install')]
-        [Switch]$CnInstall,
-        [Parameter(ParameterSetName='DS_Install')]
-        [Switch]$DsInstall,
-        [Parameter(ParameterSetName='API_Install')]
-        [Switch]$ApiInstall
-    )
-
-    $awSetupSuccessfullyCmd = @"
-    Get-Item -Path $destinationDir\AppInstall.log | Select-String -Pattern "Installation operation completed successfully"
+$installAppScriptBlock = @"
+CMD /C $airwatchAppInstallDestinationBinary /s /V`"/qn /lie $destinationDir\AppInstall.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$ConfigFile`"
 "@
 
-    for($i = 0; $i -lt $vmArray.count; $i++){ 
-        #Skip null or empty properties.
-        If ([string]::IsNullOrEmpty($vmArray[$i].Name)){Continue}
-        $vmName = $vmArray[$i].Name
-
-	    Write-Host "Running Phase 2 install of AirWatch on $($vmName). This will take a while."
-        If($CnInstall){
-            $ConfigFile = $cnConfigXmlDestinationPath
-        }
-        If($DsInstall){
-            $ConfigFile = $dsConfigXmlDestinationPath
-        }
-        If($ApiInstall){
-            $ConfigFile = $apiConfigXmlDestinationPath
+        $connectby = Invoke-CheckVMConnectivity -vmName $vmName -vmFqdn $vmFqdn -vmIP $vmIP -stagevCenter $stagevCenter
+        if($connectby -eq "WinRMFQDN") {
+            $Session = Invoke-CreatePsSession -ServerFqdn $vmFqdn
+        } elseif ($connectby -eq "WinRMIP") {
+            $Session = Invoke-CreatePsSession -ServerFqdn $vmIP
         }
 
-        # Run the command to install the AirWatch App  
-        $installAppScriptBlock = [scriptblock]::Create("CMD /C $airwatchAppInstallDestinationBinary /s /V`"/qn /lie $destinationDir\AppInstall.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$ConfigFile`"")
-        Invoke-VMScript -ScriptText $installAppScriptBlock -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
+        if($connectby -eq "WinRMFQDN" -Or $connectby -eq "WinRMIP") {
+            
 
-        #Check the install worked by looking for this line in the publish log file - "Updating database (Complete)"
-        $awSetupSuccessfully = Invoke-VMScript -ScriptText $awSetupSuccessfullyCmd -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
-        If($awSetupSuccessfully -notlike "*Installation operation completed successfully*"){
-            #throw "Failed to setup AirWatch App. Could not find a line in the Publish log that contains `"Installation operation completed successfully`""
-        } Else {
-            Write-Host "AirWatch App has been successfully installed" `n -ForegroundColor Green
+
+        } elseif ($connectby -eq "VMTOOLS") {
+            
+            
+            
+        } else {
+            Write-Host "Cannot Connect to Server $vmName to do Phase 1 Install" `n -ForegroundColor Red
         }
-
-        # Restart IIS to start AirWatch
-        Invoke-VMScript -ScriptText "iisreset" -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
     }
 }
 
