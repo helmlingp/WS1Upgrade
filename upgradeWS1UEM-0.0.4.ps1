@@ -107,10 +107,6 @@ $URLs = $WS1Config.PrimaryWorkloadServers.URLs
 
 #ask for Credentials to connect to Windows VMs using PS-Execute
 $Credential = $host.ui.PromptForCredential("Windows credentials", "Please enter your Windows user name and password for Windows VMs.", "", "NetBiosUserName")
-#$VCPriCred = $host.ui.PromptForCredential("Primary site vC credentials", "Please enter your user name and password for the Primary Site vCenter.", "", "NetBiosUserName")
-#$VCDMZPriCred = $host.ui.PromptForCredential("Primary site DMZ vC credentials", "Please enter your user name and password for the Primary Site DMZ vCenter.", "", "NetBiosUserName")
-#$VCSecCred = $host.ui.PromptForCredential("Secondary site vC credentials", "Please enter your user name and password for the Secondary Site vCenter.", "", "NetBiosUserName")
-#$VCDMZSecCred = $host.ui.PromptForCredential("Secondary site DMZ vC credentials", "Please enter your user name and password for the Secondary Site DMZ vCenter.", "", "NetBiosUserName")
 
 Function Invoke-StageFiles {
     param(
@@ -396,13 +392,8 @@ function Invoke-InstallPhase1 {
     param(
         [String]$guestOsAccount,
         [String]$guestOsPassword,
-        [Array]$vmArray,
-        [Parameter(ParameterSetName='CN_Install')]
-        [Switch]$CnInstall,
-        [Parameter(ParameterSetName='DS_Install')]
-        [Switch]$DsInstall,
-        [Parameter(ParameterSetName='API_Install')]
-        [Switch]$ApiInstall
+        [array]$vmArray,
+        [String] $stagevCenter
     )
 
     $awSetupSuccessfullyCmd = @"
@@ -413,7 +404,8 @@ function Invoke-InstallPhase1 {
         #Skip null or empty properties.
         If ([string]::IsNullOrEmpty($vmArray[$i].Name)){Continue}
         $vmName = $vmArray[$i].Name
-
+        $vmRole = $vmArray[$i].Role
+        
 	    Write-Host "Installing AirWatch on $($vmName). This will take a while."
         If($CnInstall){
             $ConfigFile = $cnConfigXmlDestinationPath
