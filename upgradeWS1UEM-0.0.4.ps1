@@ -90,11 +90,17 @@ $SecdmzvCenter = $WS1Config.SecondaryDMZServers.vCenter.FQDN
 #Local Dirs
 $toolsDir = Join-Path -Path $current_path -ChildPath $WS1Config.globalConfig.deploymentDirectories.toolsDir
 $InstallerDir = Join-Path -Path $current_path -ChildPath $WS1Config.globalConfig.deploymentDirectories.InstallerDir
+$certDir = $WS1Config.globalConfig.deploymentDirectories.certDir
+$configDir = $WS1Config.globalConfig.deploymentDirectories.configDir
 $PrereqsDir = $WS1Config.globalConfig.deploymentDirectories.PrereqsDir
 $DBInstallerDir = $WS1Config.globalConfig.deploymentDirectories.DBInstallerDir
 $AppInstallerDir = $WS1Config.globalConfig.deploymentDirectories.AppInstallerDir
 #Remote Dirs
 $destinationDir = $WS1Config.globalConfig.deploymentDirectories.destinationDir
+# CA SSL Certificate config
+$pfxFileName = $WS1Config.globalConfig.sslCertificates.airwatch.pfxFileName
+$pfxPassword = $WS1Config.globalConfig.sslCertificates.airwatch.pfxPassword
+$pfxCommonName = $WS1Config.globalConfig.sslCertificates.airwatch.pfxCommonName
 
 # Import arrays of VMs to deploy
 $priAppServers = $WS1Config.PrimaryWorkloadServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM")}
@@ -169,7 +175,7 @@ function UpgradeAirWatchDb{
 "@
 
     $dbSetupSuccessfullyCmd = @"
-    Get-Item -Path $deploymentDestinationDirectory\AirWatch_Database_Publish.log | Select-String -Pattern "Update complete"
+    Get-Item -Path $destinationDir\AirWatch_Database_Publish.log | Select-String -Pattern "Update complete"
 "@
     
     # Test DB network connectivity and stop execution if it can't be contacted over the network.
@@ -181,7 +187,7 @@ function UpgradeAirWatchDb{
     Write-Host "`nInstalling AirWatch DB. This may take a while." `n -ForegroundColor Yellow
 	
 	# Run the command to install the AirWatch DB  
-    $installDbScriptBlock = [scriptblock]::Create("CMD /C $airwatchDbInstallDestinationPath /s /V`"/qn /lie $deploymentDestinationDirectory\AirWatch_Database_InstallLog.log AWPUBLISHLOGPATH=$deploymentDestinationDirectory\AirWatch_Database_Publish.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR  IS_SQLSERVER_AUTHENTICATION=$IS_SQLSERVER_AUTHENTICATION IS_SQLSERVER_SERVER=$IS_SQLSERVER_SERVER IS_SQLSERVER_USERNAME=$IS_SQLSERVER_USERNAME IS_SQLSERVER_PASSWORD=$IS_SQLSERVER_PASSWORD IS_SQLSERVER_DATABASE=$IS_SQLSERVER_DATABASE`"")
+    $installDbScriptBlock = [scriptblock]::Create("CMD /C $airwatchDbInstallDestinationPath /s /V`"/qn /lie $destinationDir\AirWatch_Database_InstallLog.log AWPUBLISHLOGPATH=$destinationDir\AirWatch_Database_Publish.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR  IS_SQLSERVER_AUTHENTICATION=$IS_SQLSERVER_AUTHENTICATION IS_SQLSERVER_SERVER=$IS_SQLSERVER_SERVER IS_SQLSERVER_USERNAME=$IS_SQLSERVER_USERNAME IS_SQLSERVER_PASSWORD=$IS_SQLSERVER_PASSWORD IS_SQLSERVER_DATABASE=$IS_SQLSERVER_DATABASE`"")
 
     Invoke-VMScript -ScriptText $installDbScriptBlock -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
 
@@ -194,17 +200,19 @@ function UpgradeAirWatchDb{
     }
 }
 
-function Invoke-InstallPrereqs {
-    param(
+function Invoke-InstallPrereqs { param(
         [String]$guestOsAccount,
         [String]$guestOsPassword,
         [String]$installPfxFile,
+
         [string]$commonName,
         [array]$vmArray,
         [String] $stagevCenter
     )
 
-    #$completedVMs = @()
+    $destcertDir = $destinationDir + "\" + $certDir
+    $destprereqsDir = $destinationDir + "\" + $PrereqsDir
+    $pfxDestinationFilePath = $destprereqsDir + "\" + $pfxFileName
 
     for($i = 0; $i -lt $vmArray.count; $i++){
         #Skip null or empty properties.
@@ -212,36 +220,15 @@ function Invoke-InstallPrereqs {
         
         $vmName = $vmArray[$i].Name
         $vmFqdn = $vmArray[$i].FQDN
+        $vmIP = $vmArray[$i].IP
         $vmRole = $vmArray[$i].Role
 
-<#         If( ! (checkVmTools $vmName)){
-            Write-Error "$vmName VMTools is not responding on $vmName!!"
-            break
-        }
-
-        $completedVMs += (Get-VM -Name $vmName) #>
-
         Write-Host "--------------------------PREREQS--------------------------"
-        # First try to copy WS1 files with PowerShell because it is much faster. If this fails, use VMTools.
-        $connectby = Invoke-CheckVMConnectivity -vmName $vmName -vmFqdn $vmFqdn -vmIP $vmIP -stagevCenter $stagevCenter
-<#         if($connectby -eq "WinRMFQDN") {
-            Invoke-PSCopy -vmName $vmName -vmFqdn $vmFqdn -vmRole $vmRole}
-        elseif ($connectby -eq "WinRMIP") {
-            Invoke-PSCopy -vmName $vmName -vmIP $vmIP -vmRole $vmRole}
-        elseif ($connectby -eq "VMTOOLS") {
-            Invoke-VMToolsCopy -vmName $vmName -vmFqdn $vmFqdn -vmRole $vmRole -stagevCenter $stagevCenter}
-        else {
-            Write-Host "Can't connect to $vmName over the network or VMTools. Please Stage files manually." -ForegroundColor Red
-        } #>
-        if ($connectby -eq "NOVM" -Or $connectby -eq "NOVMTOOLS") {
-            Write-Host "Can't connect to $vmName over the network or VMTools. Please install prereqs manually." -ForegroundColor Red
-        }
-
-        # The AirWatch DS server required an external trusted SSL certificate to be used
+# Trusted SSL certificate install script
 $importPfxScript = @"
 CertUtil -f -p "$pfxPassword" -importpfx "$pfxDestinationFilePath"
 "@
-# AirWatch Prerequisites install script here-string
+# WS1 Prereqs install script
 $airwatchPreRequisitesScript = @"
 # Add server roles
 Install-WindowsFeature Web-Server, Web-WebServer, Web-Common-Http, Web-Default-Doc, Web-Dir-Browsing, Web-Http-Errors, Web-Static-Content, Web-Http-Redirect, Web-Health, Web-Http-Logging, Web-Custom-Logging, Web-Log-Libraries, Web-Request-Monitor, Web-Http-Tracing, Web-Performance, Web-Stat-Compression, Web-Dyn-Compression, Web-Security, Web-Filtering, Web-IP-Security, Web-App-Dev, Web-Net-Ext, Web-Net-Ext45, Web-AppInit, Web-ASP, Web-Asp-Net, Web-Asp-Net45, Web-ISAPI-Ext, Web-ISAPI-Filter, Web-Includes, Web-Mgmt-Tools, Web-Mgmt-Console, Web-Mgmt-Compat, Web-Metabase -Source $windowsDestinationSxsFolderPath
@@ -250,133 +237,92 @@ Install-WindowsFeature Web-Server, Web-WebServer, Web-Common-Http, Web-Default-D
 Install-WindowsFeature NET-Framework-Features, NET-Framework-Core, NET-Framework-45-Features, NET-Framework-45-Core, NET-Framework-45-ASPNET, NET-WCF-Services45, NET-WCF-HTTP-Activation45, NET-WCF-MSMQ-Activation45, NET-WCF-Pipe-Activation45, NET-WCF-TCP-Activation45, NET-WCF-TCP-PortSharing45, MSMQ, MSMQ-Services, MSMQ-Server, Telnet-Client
 
 # Get the certificate thumbprint
-`$certThumbprint = (Get-ChildItem Cert:\LocalMachine\My | Where {`$_.Subject -like "*CN=$commonName*"} | Select-Object -First 1).Thumbprint
+`$certThumbprint = (Get-ChildItem Cert:\LocalMachine\My | Where {`$_.Subject -like "*CN=$pfxCommonName*"} | Select-Object -First 1).Thumbprint
 
 # IIS site mapping ip/hostheader/port to cert - also maps certificate if it exists for the particular ip/port/hostheader combo
-New-WebBinding -name "$iisSite" -Protocol https -HostHeader $commonName -Port 443 -SslFlags 1 #-IP "*"
+New-WebBinding -name "Default Web Site" -Protocol https -HostHeader $pfxcommonName -Port 443 -SslFlags 1 #-IP "*"
 
 # Bind certificate to IIS site
-`$bind = Get-WebBinding -Name "$iisSite" -Protocol https -HostHeader $commonName
+`$bind = Get-WebBinding -Name "Default Web Site" -Protocol https -HostHeader $pfxcommonName
 `$bind.AddSslCertificate(`$certThumbprint, "My")
 "@
-
-$unzipCMD = @"
-Add-Type -assembly "system.io.compression.filesystem"
-[System.IO.Compression.ZipFile]::ExtractToDirectory("$windowsDestinationSxsZipPath", "$deploymentDestinationDirectory")
-"@
-
-$servicesTimeoutRegistryCmd = @'
+#Set Services Timeout Registry key
+$servicesTimeoutRegistryCmd = @"
 $registryPath = "HKLM:\SYSTEM\CurrentControlSet\Control"
 $dwordName = "ServicesPipeTimeout"
 $dwordValue = "180000"
-
 New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type DWORD -Force | Out-Null
-'@
+"@
+        # First try to copy WS1 files with PowerShell because it is much faster. If this fails, use VMTools.
+        $connectby = Invoke-CheckVMConnectivity -vmName $vmName -vmFqdn $vmFqdn -vmIP $vmIP -stagevCenter $stagevCenter
+        if($connectby -eq "WinRMFQDN") {
+            $Session = Invoke-CreatePsSession -ServerFqdn $vmFqdn
+            #Import Cert
+            Invoke-Command -Session $Session -ScriptText $importPfxScript
 
-        If($cnInstall){
-            Copy-VMGuestfile -LocalToGuest -source $cnConfigXmlPath -destination $destinationConfigFilesDirectory -Force:$true -vm $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
+            #Install Prereqs
+            # Run the AirWatch prerequisite install script
+            Write-Host "Running the AirWatch prequisite installation script on $vmName" `n -ForegroundColor Yellow
+            Invoke-Command -Session $Session -ScriptText $airwatchPreRequisitesScript
+            # Run the .NET install CMD
+            $dotNetDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include ndp48*.exe -Recurse -ErrorAction SilentlyContinue}
+            $dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath /q /norestart`""
+            Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
+            Invoke-Command -Session $Session -ScriptText $dotNetInstallCMD
+            # Run the Java install CMD
+            $javaDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include jre*.exe -Recurse -ErrorAction SilentlyContinue}
+            $JavaInstallCMD = "CMD /C `"$javaDestinationPath INSTALL_SILENT=Enable SPONSORS=0`""
+            Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
+            Invoke-Command -Session $Session -ScriptText $JavaInstallCMD
+
+            #Set Services Timeout Registry key
+            Invoke-Command -Session $Session -ScriptText $servicesTimeoutRegistryCmd
+        elseif ($connectby -eq "WinRMIP") {
+            $Session = Invoke-CreatePsSession -ServerFqdn $vmIP
+            #Import Cert
+            Invoke-Command -Session $Session -ScriptText $importPfxScript
+
+            #Install Prereqs
+            # Run the AirWatch prerequisite install script
+            Write-Host "Running the AirWatch prequisite installation script on $vmName" `n -ForegroundColor Yellow
+            Invoke-Command -Session $Session -ScriptText $airwatchPreRequisitesScript
+            # Run the .NET install CMD
+            $dotNetDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include ndp48*.exe -Recurse -ErrorAction SilentlyContinue}
+            $dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath /q /norestart`""
+            Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
+            Invoke-Command -Session $Session -ScriptText $dotNetInstallCMD
+            # Run the Java install CMD
+            $javaDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include jre*.exe -Recurse -ErrorAction SilentlyContinue}
+            $JavaInstallCMD = "CMD /C `"$javaDestinationPath INSTALL_SILENT=Enable SPONSORS=0`""
+            Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
+            Invoke-Command -Session $Session -ScriptText $JavaInstallCMD
+
+            #Set Services Timeout Registry key
+            Invoke-Command -Session $Session -ScriptText $servicesTimeoutRegistryCmd
+        elseif ($connectby -eq "VMTOOLS") {
+            #Import Cert
+            Invoke-VMScript -ScriptText $importPfxScript -VM $vmName -GuestCredential $Credential -ScriptType powershell
+
+            #Install Prereqs
+            # Run the AirWatch prerequisite install script
+            Write-Host "Running the AirWatch prequisite installation script on $vmName" `n -ForegroundColor Yellow
+            Invoke-VMScript -ScriptText $airwatchPreRequisitesScript -VM $vmName -GuestCredential $Credential -ScriptType powershell
+            # Run the .NET install CMD
+            $dotNetDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include ndp48*.exe -Recurse -ErrorAction SilentlyContinue}
+            $dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath /q /norestart`""
+            Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
+            Invoke-VMScript -ScriptText $dotNetInstallCMD -VM $vmName -GuestCredential $Credential -ScriptType powershell
+            # Run the Java install CMD
+            $javaDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include jre*.exe -Recurse -ErrorAction SilentlyContinue}
+            $JavaInstallCMD = "CMD /C `"$javaDestinationPath INSTALL_SILENT=Enable SPONSORS=0`""
+            Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
+            Invoke-VMScript -ScriptText $JavaInstallCMD -VM $vmName -GuestCredential $Credential -ScriptType powershell
+
+            #Set Services Timeout Registry key
+            Invoke-VMScript -ScriptText $servicesTimeoutRegistryCmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
         }
-        If($dsInstall){
-            Copy-VMGuestfile -LocalToGuest -source $dsConfigXmlPath -destination $destinationConfigFilesDirectory -Force:$true -vm $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
-        }
-        If($apiInstall){    
-            Copy-VMGuestfile -LocalToGuest -source $apiConfigXmlPath -destination $destinationConfigFilesDirectory -Force:$true -vm $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
-        }
-
-        $dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath /q /norestart`""
-        $JavaInstallCMD = "CMD /C `"jre-8u261-windows-x64.exe INSTALL_SILENT=Enable SPONSORS=0`""
-        
-        $createDestinationDirectoryCMD = "If(!(Test-Path -Path $deploymentDestinationDirectory)){New-Item -Path $deploymentDestinationDirectory -ItemType Directory | Out-Null}"
-        $createDestinationConfigDirectoryCMD = "If(!(Test-Path -Path $destinationConfigFilesDirectory)){New-Item -Path $destinationConfigFilesDirectory -ItemType Directory | Out-Null}"
-
-        # Create a Windows registry key to extend the timeout value to start services. The AirWatch services can often take longer than 30 seconds to start.
-        Invoke-VMScript -ScriptText $servicesTimeoutRegistryCmd -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
-
-        Write-Host "Copying AirWatch prerequisite files to $vmName" -ForegroundColor Yellow `n
-        # Check the destination directory exists on the VM and if not, create it.
-        Invoke-VMScript -ScriptText $createDestinationDirectoryCMD -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
-        # Create the destination directory for the AirWatch install files
-        Write-Host "Copying AirWatch install files to $vmName" -ForegroundColor Yellow `n
-        Invoke-VMScript -ScriptText $createDestinationConfigDirectoryCMD -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
-
-        # Copy pfx files and windows source\sxs files to the guest
-        If($installPfxFile){
-            Copy-VMGuestfile -LocalToGuest -source $pfxSourceFilePath -destination $deploymentDestinationDirectory -Force:$true -vm $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
-            Write-Host "Importing the PFX certificate on $vmName" `n -ForegroundColor Yellow
-            Invoke-VMScript -ScriptText $importPfxScript -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
-        }
-        # Copy the required files to the destination VM
-        Write-Host "Copying the Windows source sxs folder to $deploymentDestinationDirectory on $vmName" -ForegroundColor Yellow
-        Copy-VMGuestfile -LocalToGuest -source $windowsSourceSxsZipPath -destination $deploymentDestinationDirectory -Force:$true -vm $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
-        Write-Host "Copying the .Net 4.6.2 offline install files to $deploymentDestinationDirectory" -ForegroundColor Yellow
-        Copy-VMGuestfile -LocalToGuest -source $dotNetSourcePath -destination $deploymentDestinationDirectory -Force:$true -vm $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
-
-        # Unzip the windows sxs file to the local deployment directory
-        Write-Host "Extracting the Windows source sxs folder to $deploymentDestinationDirectory on $vmName" `n -ForegroundColor Yellow
-        Invoke-VMScript -ScriptText $unzipCMD -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
-
-        # Run the AirWatch prerequisite install script
-        Write-Host "Running the AirWatch prequisite installation script on $vmName" `n -ForegroundColor Yellow
-        Invoke-VMScript -ScriptText $airwatchPreRequisitesScript -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
-        
-        # Run the .NET install CMD
-        Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
-        Invoke-VMScript -ScriptText $dotNetInstallCMD -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType powershell
-        
-        # Run the Java install CMD
-        Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
-        Invoke-VMScript -ScriptText $JavaInstallCMD -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType powershell
-        
-        # First try to copy AirWatch files with PowerShell because it is much faster. If this fails, use VMTools.
-        If(checkVMNetwork $vmFqdn){
-            $psSession = CreatePsSession -ServerFqdn $vmFqdn -ServerUser $guestOsAccount -ServerPass $guestOsPassword
-            Write-Host "Using PoweShell remote session to copy files to $vmName" `n -ForegroundColor Yellow
-            Copy-Item -ToSession $psSession -Path $airwatchInstallSourceFolderPath -Destination $deploymentDestinationDirectory -Recurse -Force -Confirm:$false
-        }
-        
-        # Check if the AirWatch install files are already in the destination directory. This allows them to be copied with PowerShell or manually copied across before being forced to use VMTools to copy the files.
-        $airwatchInstallFolderExistsCMD = [ScriptBlock]::Create("Test-Path -Path $airwatchAppInstallDestinationBinary")
-        $airwatchInstallFolderExists = (Invoke-VMScript -ScriptText $airwatchInstallFolderExistsCMD -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType powershell).ScriptOutput
-        If(! $airwatchInstallFolderExists){
-            Write-Host "The AirWatch Install files were not found on the destination server. Now using VMTools to copy the files, which will take a long time!" `n -ForegroundColor Red
-            # Use 7zip to compress the AirWatch installation files into separate 200MB files that aren't too big to copy with VMTools. 
-            If(! $airwatchZipFiles){
-                Write-Host "Zipping the AirWatch install files into 200MB files that can be copied with VMTools to $vmName" `n -ForegroundColor Yellow
-                $zipOutput = Invoke-Expression -Command "$7zipSourceFolderPath\7z.exe a -y -mx1 -v200m $deploymentSourceDirectory\AirWatch_Install.7z $airwatchInstallSourceFolderPath"
-                If ($zipOut -like "*Error:*"){
-                    throw "7zip failed to zip the AirWatch install files"
-                }
-            }
-
-            # Capture each of the AirWatch zip files and copy them to the destionation server
-            $airwatchZipFiles = Get-ChildItem -Path $deploymentSourceDirectory | Where-Object {$_ -like "AirWatch_Install.7z*"}        
-        
-            # Copy each of the zip files to the destination VM. This takes a long time to use VMTools, but it means we can copy the files to VMs located in the DMZ that don't have direct network access
-            foreach($file in $airwatchZipFiles){
-                Write-Host "Copying $file of $($airwatchZipFiles.count) total files to $vmName" -ForegroundColor Yellow            
-                Copy-VMGuestfile -LocalToGuest -source $file.FullName -destination $deploymentDestinationDirectory -Force -vm $vmName -guestuser "$guestOsAccount" -guestpassword "$guestOsPassword"
-            }
-
-            # Copy 7zip files to destination VM so that the zip files can be unzipped
-            Write-Host "Copying 7-zip to $vmName" `n -ForegroundColor Yellow
-            Copy-VMGuestfile -LocalToGuest -source $7zipSourceFolderPath -destination $deploymentDestinationDirectory -Force:$true -vm $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
-
-            # Unzip the AirWatch files on the destination server
-            Write-Host "Unzipping the AirWatch install files on $vmName" `n -ForegroundColor Yellow
-            $unzipAirWatch = [ScriptBlock]::Create("CMD /C `"$7zipDestinationFolderPath\7z.exe x $deploymentDestinationDirectory\AirWatch_Install.7z.001 -o$deploymentDestinationDirectory -y`"")
-            Invoke-VMScript -ScriptText $unzipAirWatch -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
-        }
-
-        # Copy the Config files to the destination server
-        Write-Host "Copying the AirWatch config XML files to $vmName" `n -ForegroundColor Yellow
-        If($cnInstall){
-            Copy-VMGuestfile -LocalToGuest -source $cnConfigXmlPath -destination $destinationConfigFilesDirectory -Force:$true -vm $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
-        }
-        If($dsInstall){
-            Copy-VMGuestfile -LocalToGuest -source $dsConfigXmlPath -destination $destinationConfigFilesDirectory -Force:$true -vm $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
-        }
-        If($apiInstall){    
-            Copy-VMGuestfile -LocalToGuest -source $apiConfigXmlPath -destination $destinationConfigFilesDirectory -Force:$true -vm $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword
+        else {
+            Write-Host "Can't connect to $vmName over the network or VMTools. Please Stage files manually." -ForegroundColor Red;Continue
         }
 
         # Restart the VM 
@@ -397,7 +343,7 @@ function Invoke-InstallPhase1 {
     )
 
     $awSetupSuccessfullyCmd = @"
-    Get-Item -Path $deploymentDestinationDirectory\AppInstall.log | Select-String -Pattern "Installation operation completed successfully"
+    Get-Item -Path $destinationDir\AppInstall.log | Select-String -Pattern "Installation operation completed successfully"
 "@
 
     for($i = 0; $i -lt $vmArray.count; $i++){ 
@@ -418,7 +364,7 @@ function Invoke-InstallPhase1 {
         }
 
         # Run the command to install the AirWatch App  
-        $installAppScriptBlock = [scriptblock]::Create("CMD /C $airwatchAppInstallDestinationBinary /s /V`"/qn /lie $deploymentDestinationDirectory\AppInstall.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$ConfigFile`"")
+        $installAppScriptBlock = [scriptblock]::Create("CMD /C $airwatchAppInstallDestinationBinary /s /V`"/qn /lie $destinationDir\AppInstall.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$ConfigFile`"")
         Invoke-VMScript -ScriptText $installAppScriptBlock -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
 
         #Check the install worked by looking for this line in the publish log file - "Updating database (Complete)"
@@ -472,7 +418,7 @@ function Invoke-InstallPhase2 {
     )
 
     $awSetupSuccessfullyCmd = @"
-    Get-Item -Path $deploymentDestinationDirectory\AppInstall.log | Select-String -Pattern "Installation operation completed successfully"
+    Get-Item -Path $destinationDir\AppInstall.log | Select-String -Pattern "Installation operation completed successfully"
 "@
 
     for($i = 0; $i -lt $vmArray.count; $i++){ 
@@ -492,7 +438,7 @@ function Invoke-InstallPhase2 {
         }
 
         # Run the command to install the AirWatch App  
-        $installAppScriptBlock = [scriptblock]::Create("CMD /C $airwatchAppInstallDestinationBinary /s /V`"/qn /lie $deploymentDestinationDirectory\AppInstall.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$ConfigFile`"")
+        $installAppScriptBlock = [scriptblock]::Create("CMD /C $airwatchAppInstallDestinationBinary /s /V`"/qn /lie $destinationDir\AppInstall.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$ConfigFile`"")
         Invoke-VMScript -ScriptText $installAppScriptBlock -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
 
         #Check the install worked by looking for this line in the publish log file - "Updating database (Complete)"
@@ -773,7 +719,7 @@ function Invoke-ConnecttovCenter {
     }
 }
 
-function Invoke-CheckVMNetwork{
+function zInvoke-CheckVMNetwork{
 	param(
 		[string]$vmFqdn
 	) 
@@ -897,7 +843,8 @@ Function Invoke-CheckURLs {
                     $Response = Invoke-WebRequest $URL -ErrorAction SilentlyContinue
                 }
                 Catch {
-                    Invoke-StartSleep 10
+                    Start-Sleep -Seconds 10
+                    #Invoke-StartSleep 10
                 }
             }
             If ($Response.StatusCode -eq "200") {
