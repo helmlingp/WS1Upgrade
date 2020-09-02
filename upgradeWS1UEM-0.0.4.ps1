@@ -118,9 +118,6 @@ Function Invoke-StageFiles {
     param(
         [Array] $vmArray,
         [String] $stagevCenter
-        #[String] $vcCreds
-    )
-    #$completedVMs = @()
     
     For ($i = 0; $i -lt $vmArray.count; $i++) {
         #Skip null or empty properties.
@@ -130,7 +127,7 @@ Function Invoke-StageFiles {
         $vmFqdn = $vmArray[$i].FQDN
         $vmIP = $vmArray[$i].IP
         $vmRole = $vmArray[$i].Role
-        Write-Host "--------------------------STAGING--------------------------"
+        Write-Host "--------------------------STAGING--------------------------" `n -ForegroundColor Yellow
         # First try to copy WS1 files with PowerShell because it is much faster. If this fails, use VMTools.
         $connectby = Invoke-CheckVMConnectivity -vmName $vmName -vmFqdn $vmFqdn -vmIP $vmIP -stagevCenter $stagevCenter
         if($connectby -eq "WinRMFQDN") {
@@ -177,7 +174,14 @@ function UpgradeAirWatchDb {
     $dbSetupSuccessfullyCmd = @"
     Get-Item -Path $destinationDir\AirWatch_Database_Publish.log | Select-String -Pattern "Update complete"
 "@
+                <#
     
+    If($installDb){
+        # Install the AirWatch DB from the first CN Server
+        InstallAirWatchDb -vmName $dbInstallVM -guestOsAccount $localDomainAdminUser -guestOsPassword $localDomainAdminPassword    
+    }
+
+    } #>
     # Test DB network connectivity and stop execution if it can't be contacted over the network.
     $dbCheck = Invoke-VMScript -ScriptText $dbAvailable -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
     If(! $dbCheck){
@@ -200,19 +204,15 @@ function UpgradeAirWatchDb {
     }
 }
 
-function Invoke-InstallPrereqs { param(
-        [String]$guestOsAccount,
-        [String]$guestOsPassword,
-        [String]$installPfxFile,
-
-        [string]$commonName,
-        [array]$vmArray,
+function Invoke-InstallPrereqs { 
+    param(
+        [array] $vmArray,
         [String] $stagevCenter
     )
 
-    $destcertDir = $destinationDir + "\" + $certDir
-    $destprereqsDir = $destinationDir + "\" + $PrereqsDir
-    $pfxDestinationFilePath = $destprereqsDir + "\" + $pfxFileName
+    $destcertDir = $destinationDir + "\" + $InstallerDir + "\" + $certDir
+    $destprereqsDir = $destinationDir + "\" + $InstallerDir + "\" + $PrereqsDir
+    $pfxDestinationFilePath = $destprereqsDir + "\" + $InstallerDir + "\" + $pfxFileName
 
     for($i = 0; $i -lt $vmArray.count; $i++){
         #Skip null or empty properties.
@@ -223,7 +223,7 @@ function Invoke-InstallPrereqs { param(
         $vmIP = $vmArray[$i].IP
         $vmRole = $vmArray[$i].Role
 
-        Write-Host "--------------------------PREREQS--------------------------"
+        Write-Host "--------------------------PREREQS--------------------------" `n -ForegroundColor Yellow
 # Trusted SSL certificate install script
 $importPfxScript = @"
 CertUtil -f -p "$pfxPassword" -importpfx "$pfxDestinationFilePath"
@@ -253,72 +253,78 @@ $dwordName = "ServicesPipeTimeout"
 $dwordValue = "180000"
 New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type DWORD -Force | Out-Null
 "@
-        # First try to copy WS1 files with PowerShell because it is much faster. If this fails, use VMTools.
+
         $connectby = Invoke-CheckVMConnectivity -vmName $vmName -vmFqdn $vmFqdn -vmIP $vmIP -stagevCenter $stagevCenter
         if($connectby -eq "WinRMFQDN") {
             $Session = Invoke-CreatePsSession -ServerFqdn $vmFqdn
             #Import Cert
-            Invoke-Command -Session $Session -ScriptText $importPfxScript
+            Write-Host "Importing Certificate on $vmName" `n -ForegroundColor Green
+            Invoke-Command -Session $Session -ScriptBlock $importPfxScript
 
             #Install Prereqs
             # Run the AirWatch prerequisite install script
-            Write-Host "Running the AirWatch prequisite installation script on $vmName" `n -ForegroundColor Yellow
+            Write-Host "Running the AirWatch prequisite installation script on $vmName" `n -ForegroundColor Green
             Invoke-Command -Session $Session -ScriptText $airwatchPreRequisitesScript
             # Run the .NET install CMD
             $dotNetDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include ndp48*.exe -Recurse -ErrorAction SilentlyContinue}
-            $dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath /q /norestart`""
-            Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
-            Invoke-Command -Session $Session -ScriptText $dotNetInstallCMD
+            #$dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath /q /norestart`""
+            Write-Host "Install .Net on $vmName" `n -ForegroundColor Green
+            Invoke-Command -Session $Session -ScriptBlock {CMD /C `"$using:dotNetDestinationPath /q /norestart`"}
             # Run the Java install CMD
             $javaDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include jre*.exe -Recurse -ErrorAction SilentlyContinue}
-            $JavaInstallCMD = "CMD /C `"$javaDestinationPath INSTALL_SILENT=Enable SPONSORS=0`""
-            Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
-            Invoke-Command -Session $Session -ScriptText $JavaInstallCMD
+            #$JavaInstallCMD = "CMD /C `"$javaDestinationPath INSTALL_SILENT=Enable SPONSORS=0`""
+            Write-Host "Installing Java on $vmName" `n -ForegroundColor Green
+            Invoke-Command -Session $Session -ScriptBlock {CMD /C `"$using:javaDestinationPath INSTALL_SILENT=Enable SPONSORS=0`"}
 
             #Set Services Timeout Registry key
-            Invoke-Command -Session $Session -ScriptText $servicesTimeoutRegistryCmd
+            Write-Host "Setting Services Timeout Registry key on $vmName" `n -ForegroundColor Green
+            Invoke-Command -Session $Session -ScriptBlock $servicesTimeoutRegistryCmd
         } elseif ($connectby -eq "WinRMIP") {
             $Session = Invoke-CreatePsSession -ServerFqdn $vmIP
             #Import Cert
-            Invoke-Command -Session $Session -ScriptText $importPfxScript
+            Write-Host "Importing Certificate on $vmName" `n -ForegroundColor Green
+            Invoke-Command -Session $Session -ScriptBlock $importPfxScript
 
             #Install Prereqs
             # Run the AirWatch prerequisite install script
-            Write-Host "Running the AirWatch prequisite installation script on $vmName" `n -ForegroundColor Yellow
+            Write-Host "Running the AirWatch prequisite installation script on $vmName" `n -ForegroundColor Green
             Invoke-Command -Session $Session -ScriptText $airwatchPreRequisitesScript
             # Run the .NET install CMD
             $dotNetDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include ndp48*.exe -Recurse -ErrorAction SilentlyContinue}
-            $dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath /q /norestart`""
-            Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
-            Invoke-Command -Session $Session -ScriptText $dotNetInstallCMD
+            #$dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath /q /norestart`""
+            Write-Host "Install .Net on $vmName" `n -ForegroundColor Green
+            Invoke-Command -Session $Session -ScriptBlock {CMD /C `"$using:dotNetDestinationPath /q /norestart`"}
             # Run the Java install CMD
             $javaDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include jre*.exe -Recurse -ErrorAction SilentlyContinue}
-            $JavaInstallCMD = "CMD /C `"$javaDestinationPath INSTALL_SILENT=Enable SPONSORS=0`""
-            Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
-            Invoke-Command -Session $Session -ScriptText $JavaInstallCMD
+            #$JavaInstallCMD = "CMD /C `"$javaDestinationPath INSTALL_SILENT=Enable SPONSORS=0`""
+            Write-Host "Installing Java on $vmName" `n -ForegroundColor Green
+            Invoke-Command -Session $Session -ScriptBlock {CMD /C `"$using:javaDestinationPath INSTALL_SILENT=Enable SPONSORS=0`"}
 
             #Set Services Timeout Registry key
-            Invoke-Command -Session $Session -ScriptText $servicesTimeoutRegistryCmd
+            Write-Host "Setting Services Timeout Registry key on $vmName" `n -ForegroundColor Green
+            Invoke-Command -Session $Session -ScriptBlock $servicesTimeoutRegistryCmd
         } elseif ($connectby -eq "VMTOOLS") {
             #Import Cert
+            Write-Host "Importing Certificate on $vmName" `n -ForegroundColor Green
             Invoke-VMScript -ScriptText $importPfxScript -VM $vmName -GuestCredential $Credential -ScriptType powershell
 
             #Install Prereqs
             # Run the AirWatch prerequisite install script
-            Write-Host "Running the AirWatch prequisite installation script on $vmName" `n -ForegroundColor Yellow
+            Write-Host "Running the AirWatch prequisite installation script on $vmName" `n -ForegroundColor Green
             Invoke-VMScript -ScriptText $airwatchPreRequisitesScript -VM $vmName -GuestCredential $Credential -ScriptType powershell
             # Run the .NET install CMD
             $dotNetDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include ndp48*.exe -Recurse -ErrorAction SilentlyContinue}
             $dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath /q /norestart`""
-            Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
+            Write-Host "Install .Net on $vmName" `n -ForegroundColor Green
             Invoke-VMScript -ScriptText $dotNetInstallCMD -VM $vmName -GuestCredential $Credential -ScriptType powershell
             # Run the Java install CMD
             $javaDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include jre*.exe -Recurse -ErrorAction SilentlyContinue}
             $JavaInstallCMD = "CMD /C `"$javaDestinationPath INSTALL_SILENT=Enable SPONSORS=0`""
-            Write-Host "Install .Net on $vmName" `n -ForegroundColor Yellow
+            Write-Host "Installing Java on $vmName" `n -ForegroundColor Green
             Invoke-VMScript -ScriptText $JavaInstallCMD -VM $vmName -GuestCredential $Credential -ScriptType powershell
 
             #Set Services Timeout Registry key
+            Write-Host "Setting Services Timeout Registry key on $vmName" `n -ForegroundColor Green
             Invoke-VMScript -ScriptText $servicesTimeoutRegistryCmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
         } else {
             Write-Host "Can't connect to $vmName over the network or VMTools. Please Stage files manually." -ForegroundColor Red;Continue
@@ -335,8 +341,7 @@ New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type D
 
 function Invoke-InstallPhase1 {
     param(
-        [String]$guestOsAccount,
-        [String]$guestOsPassword,
+
         [array]$vmArray,
         [String] $stagevCenter
     )
@@ -349,57 +354,46 @@ function Invoke-InstallPhase1 {
         #Skip null or empty properties.
         If ([string]::IsNullOrEmpty($vmArray[$i].Name)){Continue}
         $vmName = $vmArray[$i].Name
+        $vmFqdn = $vmArray[$i].FQDN
+        $vmIP = $vmArray[$i].IP
         $vmRole = $vmArray[$i].Role
         
-	    Write-Host "Installing AirWatch on $($vmName). This will take a while."
-        If($CnInstall){
-            $ConfigFile = $cnConfigXmlDestinationPath
-        }
-        If($DsInstall){
-            $ConfigFile = $dsConfigXmlDestinationPath
-        }
-        If($ApiInstall){
-            $ConfigFile = $apiConfigXmlDestinationPath
-        }
+	    Write-Host "--------------------------PREREQS--------------------------" `n -ForegroundColor Yellow
+        $destprereqsDir = $destinationDir + "\" + $InstallerDir + "\" + $configDir
+        $ConfigFile = $vmRole + "_ConfigScript.xml"
 
-        # Run the command to install the AirWatch App  
-        $installAppScriptBlock = [scriptblock]::Create("CMD /C $airwatchAppInstallDestinationBinary /s /V`"/qn /lie $destinationDir\AppInstall.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$ConfigFile`"")
-        Invoke-VMScript -ScriptText $installAppScriptBlock -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
+        $connectby = Invoke-CheckVMConnectivity -vmName $vmName -vmFqdn $vmFqdn -vmIP $vmIP -stagevCenter $stagevCenter
+        if($connectby -eq "WinRMFQDN") {
 
-        #Check the install worked by looking for this line in the publish log file - "Updating database (Complete)"
-        $awSetupSuccessfully = Invoke-VMScript -ScriptText $awSetupSuccessfullyCmd -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
-        If($awSetupSuccessfully -notlike "*Installation operation completed successfully*"){
-            #throw "Failed to setup AirWatch App. Could not find a line in the Publish log that contains `"Installation operation completed successfully`""
-        } Else {
-            Write-Host "AirWatch App has been successfully installed" `n -ForegroundColor Green
-        }
+        } elseif ($connectby -eq "WinRMIP") {
 
-        # Restart IIS to start AirWatch
-        Invoke-VMScript -ScriptText "iisreset" -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
+        } elseif ($connectby -eq "VMTOOLS") {
+            # Run the command to install the AirWatch App  
+            $installAppScriptBlock = [scriptblock]::Create("CMD /C $airwatchAppInstallDestinationBinary /s /V`"/qn /lie $destinationDir\AppInstall.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$ConfigFile`"")
+            Invoke-VMScript -ScriptText $installAppScriptBlock -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
 
-            <# If($installCn){ 
-        # Snapshot the CN VMs before starting the install
-        snapshotVMs -vmArray $airwatchCnServers -snapshotName "Installing AirWatch"
-    
-        # Start the AirWatch prerequisite installs on the CN Servers
-        installAirWatchPrereqs -vmArray $airwatchCnServers -commonName $airwatchCnCommonName -guestOsAccount $localDomainAdminUser -guestOsPassword $localDomainAdminPassword -cnInstall
-        waitForVMs -vmArray $airwatchCnServers
-    }
-    
-    If($installDb){
-        # Install the AirWatch DB from the first CN Server
-        InstallAirWatchDb -vmName $dbInstallVM -guestOsAccount $localDomainAdminUser -guestOsPassword $localDomainAdminPassword    
-    }
-    
-    If($installCn){    
-        Write-Host "Install the AirWatch CN Servers in the internal environment" `n -ForegroundColor Yellow
-    
-        # Install AirWatch on the CN Servers.
-        InstallAirwatch -vmArray $airwatchCnServers -guestOsAccount $localDomainAdminUser -guestOsPassword $localDomainAdminPassword -CnInstall
+            #Check the install worked by looking for this line in the publish log file - "Updating database (Complete)"
+            $awSetupSuccessfully = Invoke-VMScript -ScriptText $awSetupSuccessfullyCmd -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
+            If($awSetupSuccessfully -notlike "*Installation operation completed successfully*"){
+                #throw "Failed to setup AirWatch App. Could not find a line in the Publish log that contains `"Installation operation completed successfully`""
+            } Else {
+                Write-Host "AirWatch App has been successfully installed" `n -ForegroundColor Green
+            }
+
+            # Restart IIS to start AirWatch
+            Invoke-VMScript -ScriptText "iisreset" -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
+
+            <#    
+            If($installCn){    
+            Write-Host "Install the AirWatch CN Servers in the internal environment" `n -ForegroundColor Yellow
         
-        # Check the install was successfull by use the Web API to see if it responds before continuing
-        Check-Web -URL $cnUrl
-    } #>
+            # Install AirWatch on the CN Servers.
+            InstallAirwatch -vmArray $airwatchCnServers -guestOsAccount $localDomainAdminUser -guestOsPassword $localDomainAdminPassword -CnInstall
+            
+            # Check the install was successfull by use the Web API to see if it responds before continuing
+            Check-Web -URL $cnUrl
+            #>
+        }
     }
 }
 
