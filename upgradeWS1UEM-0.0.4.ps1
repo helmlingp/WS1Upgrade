@@ -153,7 +153,7 @@ Function Invoke-StageFiles {
     }
 }
 
-function UpgradeAirWatchDb{
+function UpgradeAirWatchDb {
     param(
         [String]$guestOsAccount,
         [String]$guestOsPassword,
@@ -277,7 +277,7 @@ New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type D
 
             #Set Services Timeout Registry key
             Invoke-Command -Session $Session -ScriptText $servicesTimeoutRegistryCmd
-        elseif ($connectby -eq "WinRMIP") {
+        } elseif ($connectby -eq "WinRMIP") {
             $Session = Invoke-CreatePsSession -ServerFqdn $vmIP
             #Import Cert
             Invoke-Command -Session $Session -ScriptText $importPfxScript
@@ -299,7 +299,7 @@ New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type D
 
             #Set Services Timeout Registry key
             Invoke-Command -Session $Session -ScriptText $servicesTimeoutRegistryCmd
-        elseif ($connectby -eq "VMTOOLS") {
+        } elseif ($connectby -eq "VMTOOLS") {
             #Import Cert
             Invoke-VMScript -ScriptText $importPfxScript -VM $vmName -GuestCredential $Credential -ScriptType powershell
 
@@ -320,8 +320,7 @@ New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type D
 
             #Set Services Timeout Registry key
             Invoke-VMScript -ScriptText $servicesTimeoutRegistryCmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
-        }
-        else {
+        } else {
             Write-Host "Can't connect to $vmName over the network or VMTools. Please Stage files manually." -ForegroundColor Red;Continue
         }
 
