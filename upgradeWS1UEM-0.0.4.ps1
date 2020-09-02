@@ -384,8 +384,7 @@ CMD /C #AppInstallDestBinary# /s /V`"/qn /lie $destinationDir\AppInstall.log TAR
             } Else {
                 Write-Host "WS1 AppServer has been successfully installed on $vmName" `n -ForegroundColor Green
             }
-            # Restart IIS to start AirWatch
-            Invoke-Command -Session $Session -ScriptBlock {iisreset}
+
         } elseif ($connectby -eq "VMTOOLS") {
             # Run the command to install the AirWatch App
             $installAppDestPathcmd = "Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:AppInstallDestBinary -Include WorkspaceONE_UEM_Application*.exe -Recurse -ErrorAction SilentlyContinue}"
@@ -409,8 +408,7 @@ CMD /C #AppInstallDestBinary# /s /V`"/qn /lie $destinationDir\AppInstall.log TAR
             Write-Host "Please Copy the SQL script files (*.sql) in the $CopytoSQLServer folder to the SQL Server." `n -ForegroundColor Yellow
             Write-Host "Run these scripts once against the WS1 database AFTER database upgrade!" `n -ForegroundColor Yellow
 
-            # Restart IIS to start AirWatch
-            Invoke-VMScript -ScriptText "iisreset" -VM $vmName -GuestCredential $Credential -ScriptType powershell
+
 
         } else {
             Write-Host "Cannot Connect to Server $vmName to do Phase 1 Install" `n -ForegroundColor Red
@@ -455,13 +453,17 @@ CMD /C $airwatchAppInstallDestinationBinary /s /V`"/qn /lie $destinationDir\AppI
         }
 
         if($connectby -eq "WinRMFQDN" -Or $connectby -eq "WinRMIP") {
+            CertificateInstaller.exe -t INSTALL_TOKEN_FROM_MY_AIRWATCH
+            GEMCertificateInstaller.exe COMPANY_NAME
+            BranchCacheServerKeyInstaller.exe
             
-
-
+            # Restart IIS to start AirWatch
+            Invoke-Command -Session $Session -ScriptBlock {iisreset}
         } elseif ($connectby -eq "VMTOOLS") {
             
             
-            
+            # Restart IIS to start AirWatch
+            Invoke-VMScript -ScriptText "iisreset" -VM $vmName -GuestCredential $Credential -ScriptType powershell
         } else {
             Write-Host "Cannot Connect to Server $vmName to do Phase 1 Install" `n -ForegroundColor Red
         }
