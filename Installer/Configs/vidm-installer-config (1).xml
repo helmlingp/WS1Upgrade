@@ -15,11 +15,11 @@
 	<!-- Installer will not make a backup copy of the previous AirWatch version folder = true, Backup will occur = false-->
 	<property name="AWIGNOREBACKUP" value="true" />
 	<!-- The internal hostname of vIDM machine -->
-	<property name="AWIDMHOSTNAME" value="wdc-hwsa-004.hs.trcint.com"/>
+	<property name="AWIDMHOSTNAME" value=""/>
 	<!-- The internal port vIDM is to run on -->
 	<property name="AWIDMPORT" value="443"/>
 	<!-- The external hostname of vIDM machine, if no external please set to same as internal -->
-	<property name="AWIDMEXTERNALHOSTNAME" value="wdc-hwsa-004.hs.trcint.com"/>
+	<property name="AWIDMEXTERNALHOSTNAME" value=""/>
 	<!-- The external port for vIDM, if no external please set to same as internal -->
 	<property name="AWIDMEXTERNALPORT" value="443"/>
 	<!-- Use your own publicly trusted SSL cert for vIDM; If providing cert = 1; Use a self signed cert = empty string -->
@@ -27,7 +27,7 @@
 	<!-- Absolute path to cert for vIDM, if providing own -->
 	<property name="AWIDMCERT" value="c:\installs\hs.pfx"/>
 	<!-- Password for vIDM certificate, if providing own -->
-	<property name="AWIDMCERTPASSWORD" value="Ssn123456"/>
+	<property name="AWIDMCERTPASSWORD" value=""/>
 	<!-- Use proxy for vIDM; If providing proxy = 1; No proxy required = empty string -->
 	<property name="AWIDMUSEPROXY" value=""/>
 	<!-- Hostname/ip address of proxy, if using proxy for vIDM -->
@@ -43,7 +43,7 @@
 	<!-- if AWIDMCLUSTERJOIN=empty string, then create a default password for the vIDM admin page, if AWIDMCLUSTERJOIN=1 then set this to the cluster configuration password -->
 	<property name="AWIDMPASSWORD" value="adminpassword"/>
 	<!-- SQL Server Host Name (vIDM Database) -->
-	<property name="IDM_SQLSERVER_SERVER" value="sql-sva.hs.trcint.com"/>
+	<property name="IDM_SQLSERVER_SERVER" value="sql-sva."/>
 	<!-- SQL Server Database Name (vIDM Database) -->
 	<property name="IDM_SQLSERVER_DATABASE" value="SilentDB"/>
 	<!-- SQL Server Authentication Type (vIDM Database) ; SQL Server Auth = 1, Windows Auth is not supported yet -->
@@ -51,7 +51,7 @@
 	<!-- SQL Server Username (vIDM Database) -->
 	<property name="IDM_SQLSERVER_USERNAME" value="devadmin"/>
 	<!-- SQL Server Password (vIDM Database) -->
-	<property name="IDM_SQLSERVER_PASSWORD" value="Ssn123456"/>
+	<property name="IDM_SQLSERVER_PASSWORD" value=""/>
 	<!-- 1 to enable lite vIDM feature set; empty for vIDM full mode -->
 	<property name="AWIDMLITE" value=""/>
 	<!-- 1 to run vIDM as domain account; empty to run vIDM as LocalSystem account -->

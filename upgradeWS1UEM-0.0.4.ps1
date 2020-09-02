@@ -128,9 +128,9 @@ Function Invoke-StageFiles {
         # First try to copy WS1 files with PowerShell because it is much faster. If this fails, use VMTools.
         $connectby = Invoke-CheckVMConnectivity -vmName $vmName -vmFqdn $vmFqdn -vmIP $vmIP -stagevCenter $stagevCenter
         if($connectby -eq "WinRMFQDN") {
-            Invoke-PSCopy -vmName $vmName -vmFqdn $vmFqdn -vmRole $vmRole}
+            Invoke-PSCopy -vmName $vmName -target $vmFqdn -vmRole $vmRole}
         elseif ($connectby -eq "WinRMIP") {
-            Invoke-PSCopy -vmName $vmName -vmIP $vmIP -vmRole $vmRole}
+            Invoke-PSCopy -vmName $vmName -target $vmIP -vmRole $vmRole}
         elseif ($connectby -eq "VMTOOLS") {
             Invoke-VMToolsCopy -vmName $vmName -vmFqdn $vmFqdn -vmRole $vmRole -stagevCenter $stagevCenter}
         else {
@@ -198,7 +198,7 @@ function Invoke-InstallPrereqs {
     param(
         [String]$guestOsAccount,
         [String]$guestOsPassword,
-        [switch]$installPfxFile,
+        [String]$installPfxFile,
         [string]$commonName,
         [array]$vmArray,
         [String] $stagevCenter
@@ -520,16 +520,14 @@ Function Invoke-VMToolsCopy {
         $vcCreds = Get-Credential
         New-VICredentialStoreItem -Host $stagevCenter -User $vcCreds.UserName -Password $vcCreds.GetNetworkCredential().password
         Get-VICredentialStoreItem -Host $stagevCenter | Out-Null
-        }
-    Else{
+    } Else {
         Connect-VIServer $stagevCenter -SaveCredentials
     }
     
     #Check if VMtools installed and we can talk to the VM
     If ( ! (Invoke-CheckVmTools $vmName)) {
-        Write-Error "$vmName VMTools is not responding on $vmName!! Can't stage files to this VM.";Continue
-    }
-    Else {
+        Write-Error "$vmName VMTools is not responding on $vmName!! Can't stage files to this VM." -ForegroundColor Red;Continue
+    } Else {
         #Check if enough free disk space
         $destDrive = $destinationDir.Substring(0,1)
         $script = @'
@@ -540,61 +538,26 @@ Function Invoke-VMToolsCopy {
         # Get the correct value in the variables, then replace the marker in the string with that value
         $testfreespaceScriptBlock = $script.Replace('#$destDrive#',$destDrive)
         $testfreespace = Invoke-VMScript -ScriptText $testfreespaceScriptBlock -VM $vmName -GuestCredential $Credential -ScriptType Powershell
-        Write-Host "current free disk space is $testfreespace"
+        Write-Host "current free disk space is $testfreespace" -ForegroundColor Yellow
 
         If ( $testfreespace -lt 10) {
-            Write-Host "Target server $vmName does not have more than 10GB free disk space. Cannot continue."; `n 
+            Write-Host "Target server $vmName does not have more than 10GB free disk space. Cannot continue."; `n  -ForegroundColor Red
             Continue
-        }
-        Else {                    
+        } Else {
             #Check if $destinationDir exists
             $destinationFolderExists = (Invoke-VMScript -ScriptText {Test-Path -Path $destinationDir} -VM $vmName  -GuestCredential $Credential -ScriptType Powershell)
             
             If ( ! $destinationFolderExists) {
-                #Create destination folder
-                Write-Host "Creating $destinationDir folder path to $vmName" -ForegroundColor Yellow
-                
-                $newdestinationDirCMD = "New-Item -Path $destinationDir -ItemType Directory"
+                #Create destination folders
+                Write-Host "Creating $destinationDir folder path to $vmName" -ForegroundColor Green
+                $newdestinationDirCMD = "New-Item -Path $destinationDir -ItemType Directory -Force"
                 Invoke-VMScript -ScriptText $newdestinationDirCMD -VM $vmName -GuestCredential $Credential
-                $desttoolsDirCMD = "New-Item -Path $desttoolsDir -ItemType Directory"
+
+                $desttoolsDirCMD = "New-Item -Path $desttoolsDir -ItemType Directory -Force"
                 Invoke-VMScript -ScriptText $desttoolsDirCMD -VM $vmName -GuestCredential $Credential
-            }
-<#             write-host "Check if $destinationDir exists first"
-            $existsdestinationDir = Invoke-Command -Session $Session -ScriptBlock {Test-Path -Path $using:destinationDir}            
-            If (! $existsdestinationDir) {
-                #Create base destination folders
-                Write-Host "Creating destination base folder $destinationDir on $vmName" -ForegroundColor Yellow
-                Invoke-Command -Session $Session -ScriptBlock {New-Item -Path $using:destinationDir -ItemType Directory}
-                }
-            Else {
-                #Base Directory exists
-            }
-            
-            $existsdestInstallerDir = Invoke-Command -Session $Session -ScriptBlock {Test-Path -Path $using:destInstallerDir}
-            If (! $existsdestInstallerDir) {
-                #Create destination Installer folders
-                Write-Host "Creating $destInstallerDir folder in $destinationDir path to $vmName" -ForegroundColor Yellow
-                Invoke-Command -Session $Session -ScriptBlock {Get-Item -Path $using:destinationDir | New-Item -Name $destInstallerDir -Path $_.FullName -ItemType Directory}
-                #Invoke-Command -Session $Session -ScriptBlock {New-Item -Name $using:InstallerDir -Path $using:destinationDir -ItemType Directory}
-                }
-            Else {
-                #Installer Directory exists
-            }
-
-            $existsdesttoolsDir = Invoke-Command -Session $Session -ScriptBlock {Test-Path -Path $using:desttoolsDir}
-            If (! $existsdesttoolsDir) {
-                #Create destination Tools folders
-                Write-Host "Creating $desttoolsDir folder in $destinationDir path to $vmName" -ForegroundColor Yellow
-                Invoke-Command -Session $Session -ScriptBlock {Get-Item -Path $using:destinationDir | New-Item -Name $desttoolsDir -Path $_.FullName -ItemType Directory}
-                #Invoke-Command -Session $Session -ScriptBlock {New-Item -Name $using:toolsDir -Path $using:destinationDir -ItemType Directory}
-                }
-            Else {
-                #Tools Directory exists
-            } #>
-
-            Else {
+            } Else {
                 # Use 7zip to compress the WS1 installation files into separate 200MB files that aren't too big to copy with VMTools.
-                Write-Host "Zipping the WS1 install files into 200MB files on local machine that can be copied with VMTools to $vmName" -ForegroundColor Yellow
+                Write-Host "Zipping the WS1 install files into 200MB files on local machine that can be copied with VMTools to $vmName" -ForegroundColor Green
                 $7zipsplitCMD = {"$toolsDir\7z.exe a -y -mx1 -v200m $InstallerDir\WS1_Install.7z $InstallerDir"}
                 $zipsplitOutput = Invoke-Command -ScriptBlock $7zipsplitCMD
                 If ($zipsplitOutput -like "*Error:*") {
@@ -606,17 +569,16 @@ Function Invoke-VMToolsCopy {
                 
                 # Copy each of the zip files to the destination VM. This takes a long time to use VMTools, but it means we can copy the files to VMs located in the DMZ that don't have direct network access
                 foreach ($file in $7zipsplitFiles) {
-                    Write-Host "Copying $file of $($7zipsplitFiles.count) total files to $vmName" -ForegroundColor Yellow
+                    Write-Host "Copying $file of $($7zipsplitFiles.count) total files to $vmName" -ForegroundColor Green
                     Copy-VMGuestFile -LocalToGuest -source $file.FullName -destination $destinationDir -Force -vm $vmName -GuestCredential $Credential 
                 }
-                Copy-Item -ToSession $session -Path $toolsDir -Destination $destinationDir -Recurse -Force -Confirm:$false
 
                 # Copy Tools directory containing 7zip to destination VM so that the zip files can be unzipped
-                Write-Host "Copying 7-zip to $vmName" -ForegroundColor Yellow
+                Write-Host "Copying 7-zip to $vmName" -ForegroundColor Green
                 Copy-VMGuestFile -LocalToGuest -source $toolsDir -destination $desttoolsDir -Force:$true -vm $vmName -GuestCredential $Credential
 
                 # Unzip the WS1 files on the destination server
-                Write-Host "Unzipping the WS1 install files on $vmName" -ForegroundColor Yellow
+                Write-Host "Unzipping the WS1 install files on $vmName" -ForegroundColor Green
                 $unzip7zipsplitFiles = "CMD /C $desttoolsDir\7z.exe x $destinationDir\WS1_Install.7z.001 -o$destinationDir -y"
                 Invoke-VMScript -ScriptText $unzip7zipsplitFiles -VM $vmName -GuestCredential $Credential -ScriptType PowerShell
                 
@@ -632,23 +594,15 @@ Function Invoke-VMToolsCopy {
 Function Invoke-PSCopy {
     param(
         [String] $vmName,
-        [String] $vmFqdn,
         [String] $vmRole,
-        [Switch] $dbInstall,
-        [Parameter(ParameterSetName='CN_Install')]
-        [Switch] $cnInstall,
-        [Parameter(ParameterSetName='DS_Install')]
-        [Switch] $dsInstall,
-        [Parameter(ParameterSetName='API_Install')]
-        [Switch] $apiInstall
+        [Switch] $target
     )
 
-    $Session = Invoke-CreatePsSession -ServerFqdn $vmFqdn
-
+    $Session = Invoke-CreatePsSession -ServerFqdn $target
 
     #Check if we can connect via Powershell
     If ( $Session -is [System.Management.Automation.Runspaces.PSSession] ) {
-        Write-Host "Using PowerShell remote session to copy files to $vmName" -ForegroundColor Yellow
+        Write-Host "Using PowerShell remote session to copy files to $vmName" -ForegroundColor Green
         #Check if enough free disk space
         $destDrive = $destinationDir.SubString(0,1)
         $remoteServerDrive = Invoke-Command -Session $Session -ScriptBlock { Get-PSDrive $using:destDrive }
@@ -660,52 +614,49 @@ Function Invoke-PSCopy {
         #Write-Host "current free disk space is $testfreespace"        
         If ( $testfreespace -lt 10) {
             Write-Host "Target server $vmName does not have more than 10GB free disk space. Cannot continue." `n -ForegroundColor Red;Continue
-            }
-        Else {
+        } Else {
             write-host "Check if $destinationDir exists first"
             $existsdestinationDir = Invoke-Command -Session $Session -ScriptBlock {Test-Path -Path $using:destinationDir}            
             If (! $existsdestinationDir) {
                 #Create base destination folders
-                Write-Host "Creating destination base folder $destinationDir on $vmName" -ForegroundColor Yellow
-                Invoke-Command -Session $Session -ScriptBlock {New-Item -Path $using:destinationDir -ItemType Directory}
-                }
-            Else {
+                Write-Host "Creating destination base folder $destinationDir on $vmName" -ForegroundColor Green
+                Invoke-Command -Session $Session -ScriptBlock {New-Item -Path $using:destinationDir -ItemType Directory -Force}
+            } Else {
                 #Base Directory exists
             }
             
             $existsdestInstallerDir = Invoke-Command -Session $Session -ScriptBlock {Test-Path -Path $using:destInstallerDir}
             If (! $existsdestInstallerDir) {
                 #Create destination Installer folders
-                Write-Host "Creating $destInstallerDir folder in $destinationDir to $vmName" -ForegroundColor Yellow
-                Invoke-Command -Session $Session -ScriptBlock {New-Item -Path $using:destInstallerDir -ItemType Directory}
-                }
-            Else {
+                Write-Host "Creating $destInstallerDir folder in $destinationDir to $vmName" -ForegroundColor Green
+                Invoke-Command -Session $Session -ScriptBlock {New-Item -Path $using:destInstallerDir -ItemType Directory -Force}
+            } Else {
                 #Installer Directory exists
             }
 
             $existsdesttoolsDir = Invoke-Command -Session $Session -ScriptBlock {Test-Path -Path $using:desttoolsDir}
             If (! $existsdesttoolsDir) {
                 #Create destination Tools folders
-                Write-Host "Creating $desttoolsDir folder in $destinationDir to $vmName" -ForegroundColor Yellow
-                Invoke-Command -Session $Session -ScriptBlock {New-Item -Path $using:desttoolsDir -ItemType Directory}
-                }
-            Else {
+                Write-Host "Creating $desttoolsDir folder in $destinationDir to $vmName" -ForegroundColor Green
+                Invoke-Command -Session $Session -ScriptBlock {New-Item -Path $using:desttoolsDir -ItemType Directory -Force}
+            } Else {
                 #Tools Directory exists
             }
 
-            #Copy files
-            write-host "Copying ToolsDir files to $vmName"
+            #Copy Tools files to destination $destToolsDir
+            write-host "Copying ToolsDir files to $vmName" -ForegroundColor Green
             Copy-Item -ToSession $session -Path $toolsDir -Destination $desttoolsDir -Recurse -Force -Confirm:$false
                         
-            #Copy installer zip file to destination $BaseInstallerDir
-            $WS1InstallerZipFiles = Get-ChildItem -Path $InstallerDir | Where-Object { $_ -like "*.zip" }
+            #Copy installer zip files to destination $BaseInstallerDir
+            Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destInstallerDir -Recurse -Force
+<#             $WS1InstallerZipFiles = Get-ChildItem -Path $InstallerDir | Where-Object { $_ -like "*.zip" }
             foreach ($file in $WS1InstallerZipFiles) {
-                Write-Host "Copying $file of a $($WS1InstallerZipFiles.count) total files to $vmName" -ForegroundColor Yellow
+                Write-Host "Copying $file of a $($WS1InstallerZipFiles.count) total files to $vmName" -ForegroundColor Green
                 Copy-Item -ToSession $Session -Path $file.FullName -Destination $destinationDir -Recurse -Force -Confirm:$false
                 $destzipfile = $destinationDir + "\" + $file
-                write-host "Expanding $destzipfile to $destInstallerDir"
+                write-host "Expanding $destzipfile to $destInstallerDir" -ForegroundColor Green
                 Invoke-Command -session $Session -ScriptBlock {Expand-Archive -Path "$using:destzipfile" -DestinationPath "$using:destInstallerDir" -Force}
-            }
+            } #>
         #Disconnect from Windows Server
         Remove-PSSession $Session
         
