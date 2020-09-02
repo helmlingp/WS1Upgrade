@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<properties>
+	<!-- List of features to be installed -->
+	<property name="ADDLOCAL" value="vIDM" />
+	<!-- SQL Server Host Name (AirWatch Database) -->
+	<property name="IS_SQLSERVER_SERVER" value="" />
+	<!-- SQL Server Authentication Type (AirWatch Database) ; Windows Auth = 0, SQL Server Auth = 1 -->
+	<property name="IS_SQLSERVER_AUTHENTICATION" value="1" />
+	<!-- SQL Server Username (AirWatch Database) -->
+	<property name="IS_SQLSERVER_USERNAME" value="" />
+	<!-- SQL Server Database Name (AirWatch Database) -->
+	<property name="IS_SQLSERVER_DATABASE" value="" />
+	<!-- SQL Server Password (AirWatch Database) -->
+	<property name="IS_SQLSERVER_PASSWORD" value="" />
+	<!-- Installer will not make a backup copy of the previous AirWatch version folder = true, Backup will occur = false-->
+	<property name="AWIGNOREBACKUP" value="true" />
+	<!-- The internal hostname of vIDM machine -->
+	<property name="AWIDMHOSTNAME" value="wdc-hwsa-004.hs.trcint.com"/>
+	<!-- The internal port vIDM is to run on -->
+	<property name="AWIDMPORT" value="443"/>
+	<!-- The external hostname of vIDM machine, if no external please set to same as internal -->
+	<property name="AWIDMEXTERNALHOSTNAME" value="wdc-hwsa-004.hs.trcint.com"/>
+	<!-- The external port for vIDM, if no external please set to same as internal -->
+	<property name="AWIDMEXTERNALPORT" value="443"/>
+	<!-- Use your own publicly trusted SSL cert for vIDM; If providing cert = 1; Use a self signed cert = empty string -->
+	<property name="AWIDMUSECERT" value="1"/>
+	<!-- Absolute path to cert for vIDM, if providing own -->
+	<property name="AWIDMCERT" value="c:\installs\hs.pfx"/>
+	<!-- Password for vIDM certificate, if providing own -->
+	<property name="AWIDMCERTPASSWORD" value="Ssn123456"/>
+	<!-- Use proxy for vIDM; If providing proxy = 1; No proxy required = empty string -->
+	<property name="AWIDMUSEPROXY" value=""/>
+	<!-- Hostname/ip address of proxy, if using proxy for vIDM -->
+	<property name="AWIDMHTTPSPROXY" value=""/>
+	<!-- Port for proxy, if using proxy fsor vIDM -->
+	<property name="AWIDMHTTPSPROXYPORT" value=""/>
+	<!-- Comma-separated list of Hostname(s) you do not want to be proxied, if using vIDM proxy -->
+	<property name="AWIDMNONPROXYHOSTS" value=""/>
+	<!-- Join existing vIDM cluster; If joining cluster = 1; No cluster required = empty string -->
+	<property name="AWIDMCLUSTERJOIN" value=""/>
+	<!-- Absolute path to cluster .zip.enc package for vIDM, if joining cluster -->
+	<property name="AWIDMCLUSTERZIP" value=""/>
+	<!-- if AWIDMCLUSTERJOIN=empty string, then create a default password for the vIDM admin page, if AWIDMCLUSTERJOIN=1 then set this to the cluster configuration password -->
+	<property name="AWIDMPASSWORD" value="adminpassword"/>
+	<!-- SQL Server Host Name (vIDM Database) -->
+	<property name="IDM_SQLSERVER_SERVER" value="sql-sva.hs.trcint.com"/>
+	<!-- SQL Server Database Name (vIDM Database) -->
+	<property name="IDM_SQLSERVER_DATABASE" value="SilentDB"/>
+	<!-- SQL Server Authentication Type (vIDM Database) ; SQL Server Auth = 1, Windows Auth is not supported yet -->
+	<property name="IDM_SQLSERVER_AUTHENTICATION" value="1"/>
+	<!-- SQL Server Username (vIDM Database) -->
+	<property name="IDM_SQLSERVER_USERNAME" value="devadmin"/>
+	<!-- SQL Server Password (vIDM Database) -->
+	<property name="IDM_SQLSERVER_PASSWORD" value="Ssn123456"/>
+	<!-- 1 to enable lite vIDM feature set; empty for vIDM full mode -->
+	<property name="AWIDMLITE" value=""/>
+	<!-- 1 to run vIDM as domain account; empty to run vIDM as LocalSystem account -->
+	<property name="AWIDMSERVICEACCOUNT" value=""/>
+	<!-- If 0 is selected for Windows Auth or AWIDMSERVICEACCOUNT=1, this is the Windows Auth Username -->
+	<property name="IS_NET_API_LOGON_USERNAME" value="" />
+	<!-- If 0 is selected for Windows Auth or AWIDMSERVICEACCOUNT=1, this is the Windows Auth Password -->
+	<property name="IS_NET_API_LOGON_PASSWORD" value="" />
+</properties>

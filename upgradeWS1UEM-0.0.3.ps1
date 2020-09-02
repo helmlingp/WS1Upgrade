@@ -177,7 +177,7 @@ Function Invoke-StageFiles {
     }
 }
 
-function installAirWatchPrereqs{
+function InstallPrereqs {
     param(
         [String]$guestOsAccount,
         [String]$guestOsPassword,
@@ -347,7 +347,7 @@ New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type D
     return $completedVMs
 }
 
-function InstallAirwatch {
+function InstallPhase1 {
     param(
         [String]$guestOsAccount,
         [String]$guestOsPassword,
@@ -397,6 +397,55 @@ function InstallAirwatch {
     }
 }
 
+function InstallPhase2 {
+    param(
+        [String]$guestOsAccount,
+        [String]$guestOsPassword,
+        [Array]$vmArray,
+        [Parameter(ParameterSetName='CN_Install')]
+        [Switch]$CnInstall,
+        [Parameter(ParameterSetName='DS_Install')]
+        [Switch]$DsInstall,
+        [Parameter(ParameterSetName='API_Install')]
+        [Switch]$ApiInstall
+    )
+
+    $awSetupSuccessfullyCmd = @"
+    Get-Item -Path $deploymentDestinationDirectory\AppInstall.log | Select-String -Pattern "Installation operation completed successfully"
+"@
+
+    for($i = 0; $i -lt $vmArray.count; $i++){ 
+        #Skip null or empty properties.
+        If ([string]::IsNullOrEmpty($vmArray[$i].Name)){Continue}
+        $vmName = $vmArray[$i].Name
+
+	    Write-Host "Running Phase 2 install of AirWatch on $($vmName). This will take a while."
+        If($CnInstall){
+            $ConfigFile = $cnConfigXmlDestinationPath
+        }
+        If($DsInstall){
+            $ConfigFile = $dsConfigXmlDestinationPath
+        }
+        If($ApiInstall){
+            $ConfigFile = $apiConfigXmlDestinationPath
+        }
+
+        # Run the command to install the AirWatch App  
+        $installAppScriptBlock = [scriptblock]::Create("CMD /C $airwatchAppInstallDestinationBinary /s /V`"/qn /lie $deploymentDestinationDirectory\AppInstall.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$ConfigFile`"")
+        Invoke-VMScript -ScriptText $installAppScriptBlock -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
+
+        #Check the install worked by looking for this line in the publish log file - "Updating database (Complete)"
+        $awSetupSuccessfully = Invoke-VMScript -ScriptText $awSetupSuccessfullyCmd -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
+        If($awSetupSuccessfully -notlike "*Installation operation completed successfully*"){
+            #throw "Failed to setup AirWatch App. Could not find a line in the Publish log that contains `"Installation operation completed successfully`""
+        } Else {
+            Write-Host "AirWatch App has been successfully installed" `n -ForegroundColor Green
+        }
+
+        # Restart IIS to start AirWatch
+        Invoke-VMScript -ScriptText "iisreset" -VM $vmName -guestuser $guestOsAccount -guestpassword $guestOsPassword -ScriptType PowerShell
+    }
+}
 Function Invoke-VMToolsCopy {
     param(
         [String] $vmName,
@@ -663,7 +712,7 @@ Function Invoke-PSCopy {
     }
 }
 
-Function Invoke-Upgrade {
+Function Invoke-RemoteConsole {
     param(
         [Array] $vmArray,
         [String] $stagevCenter
@@ -1056,16 +1105,16 @@ While(! $Quit){
     }
     6 {
         Write-Host "Upgrade Primary Servers"
-        Invoke-Upgrade -vmArray $priAppServers $PrivCenter #$VCPriCred
-        Invoke-Upgrade -vmArray $priDMZAppServers $PriDMZvCenter #$VCDMZPriCred
+        Invoke-RemoteConsole -vmArray $priAppServers $PrivCenter #$VCPriCred
+        Invoke-RemoteConsole -vmArray $priDMZAppServers $PriDMZvCenter #$VCDMZPriCred
         Write-Host "Starting Services on Primary Servers"
         Invoke-StartServices -vmArray $priAppServers $PrivCenter #$VCPriCred
         Invoke-StartServices -vmArray $priDMZAppServers $PriDMZvCenter #$VCDMZPriCred
     }
     7 {
         Write-Host "Upgrade Secondary Servers"
-        Invoke-Upgrade -vmArray $secAppServers $SecvCenter #$VCSecCred
-        Invoke-Upgrade -vmArray $secDMZAppServers $SecDMZvCenter #$VCDMZSecCred
+        Invoke-RemoteConsole -vmArray $secAppServers $SecvCenter #$VCSecCred
+        Invoke-RemoteConsole -vmArray $secDMZAppServers $SecDMZvCenter #$VCDMZSecCred
         Write-Host "Starting Services on Primnary Servers"
         Invoke-StartServices -vmArray $secAppServers $SecvCenter #$VCSecCred
         Invoke-StartServices -vmArray $secDMZAppServers $SecDMZvCenter #$VCDMZSecCred
