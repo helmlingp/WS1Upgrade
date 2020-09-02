@@ -400,13 +400,15 @@ CMD /C #AppInstallDestBinary# /s /V`"/qn /lie $destinationDir\AppInstall.log TAR
             }
 
             #Copy SQL Scripts in Application installer directory to SQL Server via this machine
-            $CopytoSQLServer = New-Item -Path $current_path + "\" + "CopytoSQLServer" -ItemType Directory -Force
-            $sqlscriptsDestPathcmd = "Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:AppInstallDestBinary -Include *.sql -Recurse -ErrorAction SilentlyContinue}"
-            $sqlscriptsDestPath = Invoke-VMScript -ScriptText $sqlscriptsDestPathcmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
-            Copy-VMGuestFile -Source $sqlscriptsDestPath -Destination $CopytoSQLServer -VM myVM -GuestToLocal -GuestCredential $Credential
+            #$CopytoSQLServer = New-Item -Path $InstallerDir + "\" + "CopytoSQLServer" -ItemType Directory -Force
+            $CopytoSQLServer = Join-Path -Path $current_path -ChildPath $DBInstallerDir
+            #$sqlscriptsDestPathcmd = "Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:AppInstallDestBinary -Include *.sql -Recurse -ErrorAction SilentlyContinue}"
+            #$sqlscriptsDestPath = Invoke-VMScript -ScriptText $sqlscriptsDestPathcmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
+            #Copy-VMGuestFile -Source $sqlscriptsDestPath -Destination $CopytoSQLServer -VM myVM -GuestToLocal -GuestCredential $Credential
+            Copy-VMGuestFile -Source $AppInstallDestBinary"\*.sql" -Destination $CopytoSQLServer -VM myVM -GuestToLocal -GuestCredential $Credential
             Write-Host "Important:" `n -ForegroundColor Yellow
-            Write-Host "Please Copy the SQL script files (*.sql) in the $CopytoSQLServer folder to the SQL Server." `n -ForegroundColor Yellow
-            Write-Host "Run these scripts once against the WS1 database AFTER database upgrade!" `n -ForegroundColor Yellow
+            Write-Host "Please copy the $CopytoSQLServer folder including the SQL script files (*.sql) to the SQL Server." `n -ForegroundColor Yellow
+            Write-Host "Run the DB upgrade installer followed by these scripts against the WS1 database, AFTER database upgrade!" `n -ForegroundColor Yellow
 
 
 
@@ -438,13 +440,6 @@ Get-Item -Path $destinationDir\AppInstall.log | Select-String -Pattern "Installa
         $destprereqsDir = $destinationDir + "\" + $InstallerDir + "\" + $configDir
         $ConfigFile = $vmRole + "_ConfigScript.xml"
 
-#need to copy sql files from app server to sql server and have DBA run them
-
-
-$installAppScriptBlock = @"
-CMD /C $airwatchAppInstallDestinationBinary /s /V`"/qn /lie $destinationDir\AppInstall.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$ConfigFile`"
-"@
-
         $connectby = Invoke-CheckVMConnectivity -vmName $vmName -vmFqdn $vmFqdn -vmIP $vmIP -stagevCenter $stagevCenter
         if($connectby -eq "WinRMFQDN") {
             $Session = Invoke-CreatePsSession -ServerFqdn $vmFqdn
@@ -453,12 +448,23 @@ CMD /C $airwatchAppInstallDestinationBinary /s /V`"/qn /lie $destinationDir\AppI
         }
 
         if($connectby -eq "WinRMFQDN" -Or $connectby -eq "WinRMIP") {
-            CertificateInstaller.exe -t INSTALL_TOKEN_FROM_MY_AIRWATCH
-            GEMCertificateInstaller.exe COMPANY_NAME
-            BranchCacheServerKeyInstaller.exe
             
+            #$updinstallAppScriptBlock = $installAppScriptBlock -replace "#AppInstallDestBinary#", $installAppDestPath
+            $updinstallAppScriptBlock = $installAppScriptBlock.Replace('#AppInstallDestBinary#',$installAppDestPath)
+
+$phase2ScriptBlock = @"
+CertificateInstaller.exe -t INSTALL_TOKEN_FROM_MY_AIRWATCH
+
+<!-- Company Name for GEM -->
+<property name="AWGEMCOMPANY" value="XXXXXCOMPANY_NAMEXXXXX" />
+GEMCertificateInstaller.exe COMPANY_NAME
+
+BranchCacheServerKeyInstaller.exe
+"@
+            Invoke-Command -Session $Session -ScriptBlock $phase2ScriptBlock 
             # Restart IIS to start AirWatch
             Invoke-Command -Session $Session -ScriptBlock {iisreset}
+            
         } elseif ($connectby -eq "VMTOOLS") {
             
             
@@ -478,16 +484,10 @@ Function Invoke-VMToolsCopy {
         #[String] $vcCreds
     )
     
-    If ( ! (Get-VICredentialStoreItem -Host $stagevCenter)) {
-        $vcCreds = Get-Credential
-        New-VICredentialStoreItem -Host $stagevCenter -User $vcCreds.UserName -Password $vcCreds.GetNetworkCredential().password
-        Get-VICredentialStoreItem -Host $stagevCenter | Out-Null
-    } Else {
-        Connect-VIServer $stagevCenter -SaveCredentials
-    }
+    Invoke-ConnecttovCenter -stagevCenter $stagevCenter
     
     #Check if VMtools installed and we can talk to the VM
-    If ( ! (Invoke-CheckVmTools $vmName)) {
+    If ( ! (Invoke-CheckVmTools -vmName $vmName)) {
         Write-Error "$vmName VMTools is not responding on $vmName!! Can't stage files to this VM." -ForegroundColor Red;Continue
     } Else {
         #Check if enough free disk space
@@ -632,17 +632,6 @@ Function Invoke-PSCopy {
     }
 }
 
-Function Invoke-StartSleep($seconds) {
-    $doneDT = (Get-Date).AddSeconds($seconds)
-    while ($doneDT -gt (Get-Date)) {
-        $secondsLeft = $doneDT.Subtract((Get-Date)).TotalSeconds
-        $percent = ($seconds - $secondsLeft) / $seconds * 100
-        Write-Progress -Activity "Sleeping" -Status "Sleeping..." -SecondsRemaining $secondsLeft -PercentComplete $percent
-        [System.Threading.Thread]::Sleep(500)
-    }
-    Write-Progress -Activity "Sleeping" -Status "Sleeping..." -SecondsRemaining 0 -Completed
-}
-
 function Invoke-CheckVMConnectivity{
 	param(
         [string]$vmName,
@@ -735,20 +724,6 @@ function Invoke-ConnecttovCenter {
     }
 }
 
-function zInvoke-CheckVMNetwork{
-	param(
-		[string]$vmFqdn
-	) 
-    
-    # Check if network is accessible
-    if(Test-Connection -ComputerName $vmFqdn -Count 1 -Quiet){
-        #Write-Host "Connected to $vmFqdn over the network!" `n -ForegroundColor Yellow
-		return $true
-	} else {
-        Write-Host "Unable to reach $vmFqdn over the network!" `n -ForegroundColor Red
-		return $false
-    }
-}
 
 Function Invoke-CheckVMTools {
     param(
@@ -776,17 +751,10 @@ Function Invoke-enablePSRemoting {
         [String] $stagevCenter
     )
     
-    If ( ! (Get-VICredentialStoreItem -Host $stagevCenter)) {
-        $vcCreds = Get-Credential
-        New-VICredentialStoreItem -Host $stagevCenter -User $vcCreds.UserName -Password $vcCreds.GetNetworkCredential().password
-        Get-VICredentialStoreItem -Host $stagevCenter | Out-Null
-        }
-    Else{
-        Connect-VIServer $stagevCenter -SaveCredentials
-    }
+    Invoke-ConnecttovCenter -stagevCenter $stagevCenter
     
     #Check if VMtools installed and we can talk to the VM
-    If ( ! (Invoke-CheckVmTools $vmName)) {
+    If ( ! (Invoke-CheckVmTools -vmName $vmName)) {
         Write-Host "$vmName VMTools is not responding on $vmName!! Can't do any automation on this VM." -ForegroundColor Red
         $CheckPSRemoting =  $false
         return $CheckPSRemoting
@@ -808,10 +776,10 @@ Function Invoke-enablePSRemoting {
             Invoke-VMScript -ScriptText $desttoolsDirCMD -VM $vmName -GuestCredential $Credential
         }
 
-        $enablepsremotingscript = @'
+$enablepsremotingscript = @'
 
-        Set-ExecutionPolicy undefined
-        Enable-PSRemoting -Force
+Set-ExecutionPolicy undefined
+Enable-PSRemoting -Force
 '@
         #Create PS script in current directory
         $enablepsremotingscriptfile = $current_path + "\" + "enablepsremoting.ps1"
