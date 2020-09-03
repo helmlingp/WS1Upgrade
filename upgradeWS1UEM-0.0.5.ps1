@@ -659,10 +659,9 @@ Function Invoke-PSCopy {
         $CheckPSCopy =  $true
         return $CheckPSCopy
         }
-    else {
+    } else {
         $CheckPSCopy =  $false
         return $CheckPSCopy
-        }
     }
 }
 
