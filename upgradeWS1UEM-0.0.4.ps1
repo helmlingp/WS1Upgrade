@@ -1424,12 +1424,12 @@ Function Invoke-Menu {
     Write-Host "The following tasks can be exectued from this tool" -ForegroundColor Cyan
     Write-Host `n
     Write-Host "1: PHASE 1 - Create New Application Server VMs" -ForegroundColor Cyan `n
-    Write-Host "2: PHASE 1 - Install Pre-Reqs / Config New Application Servers" -ForegroundColor Cyan `n
-    Write-Host "3: PHASE 1 - Stage installer binaries to New Application & DB servers" -ForegroundColor Cyan `n
+    Write-Host "2: PHASE 1 - Stage installer binaries to New Application & DB servers" -ForegroundColor Cyan `n
+    Write-Host "3: PHASE 1 - Install Pre-Reqs / Config New Application Servers" -ForegroundColor Cyan `n
     Write-Host "4: PHASE 1 - Run installer (staging mode) on New Application Servers" -ForegroundColor Cyan `n
     Write-Host "5: PHASE 2 - Shutdown Old Application Server VMs" -ForegroundColor Cyan `n
-    Write-Host "6: PHASE 2 - Run installer on DB Server *** CAREFUL ***" -ForegroundColor Cyan `n
-    Write-Host "7: PHASE 2 - Run PHASE 2 components on NewApplication Servers" -ForegroundColor Cyan `n
+    Write-Host "6: PHASE 2 - Run installer on DB Server" -ForegroundColor Cyan `n
+    Write-Host "7: PHASE 2 - Run PHASE 2 components on New Application Servers" -ForegroundColor Cyan `n
     Write-Host "8: PHASE 2 - Add Application Servers into NSX LB Pools" -ForegroundColor Cyan `n
     Write-Host "9: Test Site URLs" -ForegroundColor Cyan `n
     Write-Host "Type 'x' to exit" -ForegroundColor Yellow
@@ -1458,16 +1458,6 @@ While(! $Quit){
         }
     }
     2 {
-        Write-Host "PHASE 1 - Install Pre-Reqs / Config New Application Servers"
-        Invoke-InstallPrereqs -vmArray $priAppServers $PrivCenter #$VCPriCred
-        Invoke-InstallPrereqs -vmArray $priDMZAppServers $PriDMZvCenter #$VCDMZPriCred
-        #test if secondary exists
-        if($SecvCenter){
-            Invoke-InstallPrereqs -vmArray $secAppServers $SecvCenter #$VCSecCred
-            Invoke-InstallPrereqs -vmArray $secDMZAppServers $SecDMZvCenter #$VCDMZSecCred
-        }
-    }
-    3 {
         Write-Host "PHASE 1 - Stage installer binaries to New Application & DB servers"
         Invoke-StageFiles -vmArray $priAppServers $PrivCenter #$VCPriCred
         Invoke-StageFiles -vmArray $priDBServers $PrivCenter #$VCPriCred
@@ -1479,9 +1469,18 @@ While(! $Quit){
             Invoke-StageFiles -vmArray $secDMZAppServers $SecDMZvCenter #$VCDMZSecCred
         }
     }
+    3 {
+        Write-Host "PHASE 1 - Install Pre-Reqs / Config New Application Servers"
+        Invoke-InstallPrereqs -vmArray $priAppServers $PrivCenter #$VCPriCred
+        Invoke-InstallPrereqs -vmArray $priDMZAppServers $PriDMZvCenter #$VCDMZPriCred
+        #test if secondary exists
+        if($SecvCenter){
+            Invoke-InstallPrereqs -vmArray $secAppServers $SecvCenter #$VCSecCred
+            Invoke-InstallPrereqs -vmArray $secDMZAppServers $SecDMZvCenter #$VCDMZSecCred
+        }
+    }
     4 {
-        Write-Host "PHASE 1 - Run PHASE 1 components on New Application Servers"
-        Invoke-InstallPhase1
+        Write-Host "PHASE 1 - Run installer (staging mode) on New Application Servers"
         Invoke-InstallPhase1 -vmArray $priAppServers $PrivCenter #$VCPriCred
         Invoke-InstallPhase1 -vmArray $priDMZAppServers $PriDMZvCenter #$VCDMZPriCred
         #test if secondary exists
@@ -1493,32 +1492,20 @@ While(! $Quit){
     5 {
         Write-Host "PHASE 2 - Shutdown Old Application Server VMs"
         Write-Host "CURRENTLY DISABLED, PLEASE DO THIS MANUALLY"
-        #Invoke-ShutdownVMs -vmArray $priAppServers $PrivCenter #$VCPriCred
-        #Invoke-ShutdownVMs -vmArray $priDMZAppServers $PriDMZvCenter #$VCDMZPriCred
-        #test if secondary exists
-        if($SecvCenter){
-            #Invoke-ShutdownVMs -vmArray $secAppServers $SecvCenter #$VCSecCred
-            #Invoke-ShutdownVMs -vmArray $secDMZAppServers $SecDMZvCenter #$VCDMZSecCred
-        }
     }
     6 {
         Write-Host "PHASE 2 - Run installer on DB Server *** CAREFUL ***"
-        #ARE YOU SURE
-        Invoke-InstallPhase2 -vmArray $priDBServers $PrivCenter #$VCPriCred
-        #test if secondary exists
-        if($SecvCenter){
-            Invoke-InstallPhase2 -vmArray $secDBServers $SecvCenter #$VCPriCred
-        }
+        Write-Host "CURRENTLY DISABLED, PLEASE DO THIS MANUALLY"
     }
     7 {
         Write-Host "PHASE 2 - Run PHASE 2 components on Application Servers"
         Write-Host "CURRENTLY DISABLED, PLEASE DO THIS MANUALLY"
-        #Invoke-InstallPhase2 -vmArray $secAppServers $SecvCenter #$VCSecCred
-        #Invoke-InstallPhase2 -vmArray $secDMZAppServers $SecDMZvCenter #$VCDMZSecCred
+        Invoke-InstallPhase2 -vmArray $secAppServers $SecvCenter #$VCSecCred
+        Invoke-InstallPhase2 -vmArray $secDMZAppServers $SecDMZvCenter #$VCDMZSecCred
         #test if secondary exists
         if($SecvCenter){
-            #Invoke-InstallPhase2 -vmArray $secAppServers $SecvCenter #$VCSecCred
-            #Invoke-InstallPhase2 -vmArray $secDMZAppServers $SecDMZvCenter #$VCDMZSecCred
+            Invoke-InstallPhase2 -vmArray $secAppServers $SecvCenter #$VCSecCred
+            Invoke-InstallPhase2 -vmArray $secDMZAppServers $SecDMZvCenter #$VCDMZSecCred
         }
     }
     8 {
