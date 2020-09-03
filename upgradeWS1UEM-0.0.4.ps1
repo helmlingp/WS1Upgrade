@@ -21,7 +21,7 @@
 	.DESCRIPTION
 	  This powershell script automates stages of a WS1 UEM upgrade using a menu selection for each phase.
   .EXAMPLE
-    powershell.exe -ep bypass -file .\upgradeWS1UEM-0.0.4.ps1 -WS1ConfigJson WS1Config.json
+    powershell.exe -ep bypass -file .\upgradeWS1UEM-0.0.4.ps1 WS1Config.json
 #>
 
 $current_path = $PSScriptRoot;
@@ -36,7 +36,7 @@ $Logfile = Join-Path -Path $current_path -ChildPath $logdate_WS1upgrade
 Start-Transcript -Path $Logfile -Force
 
 #Get config from JSON file that was passed as a parameter
-#$WS1ConfigJson = [String]$args
+$WS1ConfigJson = [String]$args
 If(! $WS1ConfigJson){
     Write-Host "WS1Config JSON file is a required parameter" `n -ForegroundColor Red
     Exit
