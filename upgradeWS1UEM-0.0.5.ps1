@@ -145,19 +145,15 @@ Function Invoke-StageFiles {
         $connectby = Invoke-CheckVMConnectivity -vmName $vmName -vmFqdn $vmFqdn -vmIP $vmIP -stagevCenter $stagevCenter
         if($connectby -eq "WinRMFQDN") {
             $Session = Invoke-CreatePsSession -ServerFqdn $vmFqdn
-			write-host "created PSSession with $vmFqdn"
         } elseif ($connectby -eq "WinRMIP") {
             $Session = Invoke-CreatePsSession -ServerFqdn $vmIP
-			write-host "created PSSession with $vmIP"
         } elseif ($connectby -eq "VMTOOLS") {
             Invoke-ConnecttovCenter -stagevCenter $stagevCenter
         }
 
         if($connectby -eq "WinRMFQDN" -Or $connectby -eq "WinRMIP") {
-			write-host "about to copy files to $vmName over Powershell"
             Invoke-PSCopy -vmName $vmName -Session $Session}
         elseif ($connectby -eq "VMTOOLS") {
-			write-host "about to copy files to $vmName by VMTools"
             Invoke-VMToolsCopy -vmName $vmName -vmFqdn $vmFqdn -vmRole $vmRole -stagevCenter $stagevCenter}
         else {
             Write-Host "Can't connect to $vmName over the network or VMTools. Please Stage files manually." -ForegroundColor Red
@@ -595,14 +591,11 @@ $drivefree = $drive.Free/1GB
 Function Invoke-PSCopy {
     param(
         [String] $vmName,
-        [String] $Session
+        $Session
     )
 
-    #$Session = Invoke-CreatePsSession -ServerFqdn $target
-write-host "inside Invoke-PSCopy: $vmFqdn"
-    #Check if we can connect via Powershell
-    If ( $Session -is [System.Management.Automation.Runspaces.PSSession] ) {
-        Write-Host "Using PowerShell remote session to copy files to $vmName" -ForegroundColor Green
+    If ($session -is [System.Management.Automation.Runspaces.PSSession]) {
+		Write-Host "Using PowerShell remote session to copy files to $vmName" -ForegroundColor Green
         #Check if enough free disk space
         $destDrive = $destinationDir.SubString(0,1)
         $remoteServerDrive = Invoke-Command -Session $Session -ScriptBlock { Get-PSDrive $using:destDrive }
@@ -685,10 +678,10 @@ function Invoke-CheckVMConnectivity{
 	
     if (Test-WsMan -ComputerName $vmFqdn) {
         Write-Host "Connected to $vmFqdn over the network!" `n -ForegroundColor Green
-		$connection = "WinRMFQDN"
+		$connection = "WinRMFQDN"}
     elseif (Test-WsMan -ComputerName $vmIP){ 
         Write-Host "Connected to $vmName ($vmIP) via IP over the network!" `n -ForegroundColor Green
-        $connection = "WinRMIP"
+        $connection = "WinRMIP"}
     elseif (Test-Connection -TargetName $vmFqdn -Count 1 -Quiet) {
         Write-Host "$vmFqdn responding via IP on the network!" `n -ForegroundColor Yellow
         $connection = "FQDN"}
@@ -788,7 +781,7 @@ Function Invoke-CreatePsSession {
 		[String] $ServerFqdn
     )
     #Add VM to WinRM Trusted Hosts
-	set-item WSMan:\localhost\Client\TrustedHosts -Value $vmFqdn -Force -Confirm:$false}
+	set-item WSMan:\localhost\Client\TrustedHosts -Value $ServerFqdn -Force -Confirm:$false
 	
 	#Write-Host "Attempting to create remote PowerShell session on $ServerFqdn."
     $ReturnValue = New-PSSession -ComputerName $ServerFqdn -Authentication Default -Credential $Credential -ErrorAction SilentlyContinue
