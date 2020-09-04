@@ -295,7 +295,7 @@ New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type D
             # Run the .NET install CMD
             $dotNetDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include ndp48*.exe -Recurse -ErrorAction SilentlyContinue}
             #$dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath /q /norestart`""
-            Write-Host "Install .Net on $vmName" `n -ForegroundColor Green
+            Write-Host "Installing .Net on $vmName" `n -ForegroundColor Green
             Invoke-Command -Session $Session -ScriptBlock {CMD /C `"$using:dotNetDestinationPath /q /norestart`"}
             
             # Run the Java install CMD
@@ -322,7 +322,7 @@ New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type D
             $dotNetDestinationPathcmd = "Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include ndp48*.exe -Recurse -ErrorAction SilentlyContinue}"
             $dotNetDestinationPath = Invoke-VMScript -ScriptText $dotNetDestinationPathcmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
             $dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath /q /norestart`""
-            Write-Host "Install .Net on $vmName" `n -ForegroundColor Green
+            Write-Host "Installing .Net on $vmName" `n -ForegroundColor Green
             Invoke-VMScript -ScriptText $dotNetInstallCMD -VM $vmName -GuestCredential $Credential -ScriptType powershell
             
             # Run the Java install CMD
@@ -335,13 +335,21 @@ New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type D
             #Set Services Timeout Registry key
             Write-Host "Setting Services Timeout Registry key on $vmName" `n -ForegroundColor Green
             Invoke-VMScript -ScriptText $servicesTimeoutRegistryCmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
+
+            # Restart the VM 
+            
         } else {
             Write-Host "Can't connect to $vmName over the network or VMTools. Please Stage files manually." -ForegroundColor Red;Continue
         }
 
-        # Restart the VM 
         Write-Host "Restarting $vmName to complete the prerquisite install" `n -ForegroundColor Yellow
-        Restart-VMGuest -VM $vmName -Confirm:$false
+        if($connectby -eq "WinRMFQDN") {
+            Restart-Computer -ComputerName $vmFqdn -Credential $Credential -Force
+        } elseif ($connectby -eq "WinRMIP") {
+            Restart-Computer -ComputerName $vmIP -Credential $Credential -Force
+        } elseif ($connectby -eq "VMTOOLS") {
+            Restart-VMGuest -VM $vmName -Confirm:$false
+        }
 
         Write-Host "Finished the AirWatch prerequisite installs" `n -ForegroundColor Green
     }
@@ -608,7 +616,7 @@ Function Invoke-PSCopy {
         If ( $testfreespace -lt 10) {
             Write-Host "Target server $vmName does not have more than 10GB free disk space. Cannot continue." `n -ForegroundColor Red;Continue
         } Else {
-            write-host "Check if $destinationDir exists first"
+            #write-host "Check if $destinationDir exists first"
             $existsdestinationDir = Invoke-Command -Session $Session -ScriptBlock {Test-Path -Path $using:destinationDir}            
             If (! $existsdestinationDir) {
                 #Create base destination folders
@@ -618,7 +626,7 @@ Function Invoke-PSCopy {
                 #Base Directory exists
             }
             
-            $existsdestInstallerDir = Invoke-Command -Session $Session -ScriptBlock {Test-Path -Path $using:destInstallerDir}
+<#             $existsdestInstallerDir = Invoke-Command -Session $Session -ScriptBlock {Test-Path -Path $using:destInstallerDir}
             If (! $existsdestInstallerDir) {
                 #Create destination Installer folders
                 Write-Host "Creating $destInstallerDir folder in $destinationDir to $vmName" -ForegroundColor Green
@@ -634,14 +642,15 @@ Function Invoke-PSCopy {
                 Invoke-Command -Session $Session -ScriptBlock {New-Item -Path $using:desttoolsDir -ItemType Directory -Force}
             } Else {
                 #Tools Directory exists
-            }
+            } #>
 
             #Copy Tools files to destination $destToolsDir
             write-host "Copying ToolsDir files to $vmName" -ForegroundColor Green
             Copy-Item -ToSession $session -Path $toolsDir -Destination $desttoolsDir -Recurse -Force -Confirm:$false
                         
-            #Copy installer zip files to destination $BaseInstallerDir
-            Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destInstallerDir -Recurse -Force -Confirm:$false
+            #Copy installer zip files to destination directory
+            Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destinationDir -Recurse -Force -Confirm:$false
+            #Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destInstallerDir -Recurse -Force -Confirm:$false
 <#             $WS1InstallerZipFiles = Get-ChildItem -Path $InstallerDir | Where-Object { $_ -like "*.zip" }
             foreach ($file in $WS1InstallerZipFiles) {
                 Write-Host "Copying $file of a $($WS1InstallerZipFiles.count) total files to $vmName" -ForegroundColor Green
@@ -755,7 +764,6 @@ function Invoke-ConnecttovCenter {
     }
 }
 
-
 Function Invoke-CheckVMTools {
     param(
         [string]$vmName,
@@ -814,7 +822,6 @@ Enable-PSRemoting -Force
     }
 }
 
-
 Function Invoke-CheckURLs {
     param(
         [Array] $URLArray
@@ -855,7 +862,6 @@ Function Invoke-CheckURLs {
         }
     }
 }
-
 
 Function zInvoke-CreateVMs {
     param(
@@ -983,7 +989,6 @@ If($deployAirWatch){
 
     }
 }
-
 function zcloneVMs {
     param(
         [Array]$vmArray,
@@ -1154,7 +1159,6 @@ $addAdminScriptText = @"
         $Output | Select-Object -ExpandProperty ScriptOutput
     }
 }
-
 Function zInvoke-ShutdownVMs {
     param(
         [array] $vmArray,
@@ -1175,8 +1179,6 @@ Function zInvoke-ShutdownVMs {
     #Disconnect from vCenter Server
     Disconnect-VIServer * -Force -Confirm:$false
 }
-
-
 Function zInvoke-vIDMUpg {
     #script to take all vIDM nodes out of load balancer pools
     #script to add the first vIDM node into the load balancer pool
@@ -1187,7 +1189,6 @@ Function zInvoke-vIDMUpg {
     # reboot when done
     #script to add next vIDM node back into load balancer pool and run commands
 }
-
 Function zInvoke-RemoteConsole {
     param(
         [Array] $vmArray,
@@ -1236,7 +1237,6 @@ Function zInvoke-RemoteConsole {
     }
 
 }
-
 function zInvoke-StartServices {
     param(
         [Array] $vmArray,
@@ -1287,7 +1287,6 @@ function zInvoke-StartServices {
 
     #$completedVMs += (Get-VM -Name $vmName)
 }
-
 Function zInvoke-StopServices {
     param(
         [Array] $vmArray,
@@ -1362,7 +1361,6 @@ function zInvoke-checkAirWatchService{
 	}
 	return $Status
 }
-
 Function zInvoke-SnapshotVMs {
     param(
         [array] $vmArray,
@@ -1420,9 +1418,9 @@ Write-Host "Process started $logdate"
 Function Invoke-Menu {
     #Clear-Host
     Write-Host `n
-    Write-Host "                                                              " -BackgroundColor Green -ForegroundColor DarkBlue
-    Write-Host "          VMware Workspace ONE Blue / Green Upgrade Script    " -BackgroundColor Green -ForegroundColor DarkBlue
-    Write-Host "                                                              " -BackgroundColor Green -ForegroundColor DarkBlue
+    Write-Host "                                                                    " -BackgroundColor Green -ForegroundColor DarkBlue
+    Write-Host "          VMware Workspace ONE Blue / Green Upgrade Script          " -BackgroundColor Green -ForegroundColor DarkBlue
+    Write-Host "                                                                    " -BackgroundColor Green -ForegroundColor DarkBlue
     Write-Host `n
     Write-Host "The following tasks can be exectued from this tool" -ForegroundColor Cyan
     Write-Host `n
@@ -1435,9 +1433,9 @@ Function Invoke-Menu {
     Write-Host "7: PHASE 2 - Run PHASE 2 components on New Application Servers" -ForegroundColor Cyan `n
     Write-Host "8: PHASE 2 - Add Application Servers into NSX LB Pools" -ForegroundColor Cyan `n
     Write-Host "9: Test Site URLs" -ForegroundColor Cyan `n
-    Write-Host "Type 'x' to exit" -ForegroundColor Yellow
+    Write-Host "Type 'x' to exit" -ForegroundColor Red
     Write-Host `n
-    $Selection = (Read-Host "Select the task you would like to execute").ToLower()
+    $Selection = (Read-Host "Select the task you would like to execute").ToLower() -ForegroundColor Cyan
     return $Selection
 }
 
@@ -1451,7 +1449,7 @@ While(! $Quit){
     switch 
     ($Selection) {
     1 {
-        Write-Host "PHASE 1 - Create New Application Server VMs"
+        Write-Host "PHASE 1 - Create New Application Server VMs" -ForegroundColor Cyan `n
         Invoke-CreateVMs -vmArray $priAppServers $PrivCenter #$VCPriCred
         Invoke-CreateVMs -vmArray $priDMZAppServers $PriDMZvCenter #$VCDMZPriCred
         #test if secondary exists
@@ -1461,7 +1459,7 @@ While(! $Quit){
         }
     }
     2 {
-        Write-Host "PHASE 1 - Stage installer binaries to New Application & DB servers"
+        Write-Host "PHASE 1 - Stage installer binaries to New Application & DB servers" -ForegroundColor Cyan `n
         Invoke-StageFiles -vmArray $priAppServers $PrivCenter #$VCPriCred
         Invoke-StageFiles -vmArray $priDBServers $PrivCenter #$VCPriCred
         Invoke-StageFiles -vmArray $priDMZAppServers $PriDMZvCenter #$VCDMZPriCred
@@ -1473,7 +1471,7 @@ While(! $Quit){
         }
     }
     3 {
-        Write-Host "PHASE 1 - Install Pre-Reqs / Config New Application Servers"
+        Write-Host "PHASE 1 - Install Pre-Reqs / Config New Application Servers" -ForegroundColor Cyan `n
         Invoke-InstallPrereqs -vmArray $priAppServers $PrivCenter #$VCPriCred
         Invoke-InstallPrereqs -vmArray $priDMZAppServers $PriDMZvCenter #$VCDMZPriCred
         #test if secondary exists
@@ -1483,7 +1481,7 @@ While(! $Quit){
         }
     }
     4 {
-        Write-Host "PHASE 1 - Run installer (staging mode) on New Application Servers"
+        Write-Host "PHASE 1 - Run installer (staging mode) on New Application Servers" -ForegroundColor Cyan `n
         Invoke-InstallPhase1 -vmArray $priAppServers $PrivCenter #$VCPriCred
         Invoke-InstallPhase1 -vmArray $priDMZAppServers $PriDMZvCenter #$VCDMZPriCred
         #test if secondary exists
@@ -1493,16 +1491,15 @@ While(! $Quit){
         }
     }
     5 {
-        Write-Host "PHASE 2 - Shutdown Old Application Server VMs"
-        Write-Host "CURRENTLY DISABLED, PLEASE DO THIS MANUALLY"
+        Write-Host "PHASE 2 - Shutdown Old Application Server VMs" -ForegroundColor Cyan `n
+        Write-Host "CURRENTLY DISABLED, PLEASE DO THIS MANUALLY" -ForegroundColor Red `n
     }
     6 {
-        Write-Host "PHASE 2 - Run installer on DB Server *** CAREFUL ***"
-        Write-Host "CURRENTLY DISABLED, PLEASE DO THIS MANUALLY"
+        Write-Host "PHASE 2 - Run installer on DB Server" -ForegroundColor Cyan `n
+        Write-Host "CURRENTLY DISABLED, PLEASE DO THIS MANUALLY" -ForegroundColor Red `n
     }
     7 {
-        Write-Host "PHASE 2 - Run PHASE 2 components on Application Servers"
-        Write-Host "CURRENTLY DISABLED, PLEASE DO THIS MANUALLY"
+        Write-Host "PHASE 2 - Run PHASE 2 components on Application Servers" -ForegroundColor Cyan `n
         Invoke-InstallPhase2 -vmArray $secAppServers $SecvCenter #$VCSecCred
         Invoke-InstallPhase2 -vmArray $secDMZAppServers $SecDMZvCenter #$VCDMZSecCred
         #test if secondary exists
@@ -1512,16 +1509,16 @@ While(! $Quit){
         }
     }
     8 {
-        Write-Host "PHASE 2 - Add Application Servers into NSX LB Pools"
-        Write-Host "CURRENTLY DISABLED, PLEASE DO THIS MANUALLY"
+        Write-Host "PHASE 2 - Add Application Servers into NSX LB Pools" -ForegroundColor Cyan `n
+        Write-Host "CURRENTLY DISABLED, PLEASE DO THIS MANUALLY" -ForegroundColor Red `n
     }
     9 {
-        Write-Host "Check the install was successfull by use the Web API to see if it responds"
+        Write-Host "Check the install was successfull by use the Web API to see if it responds" -ForegroundColor Cyan `n
         Invoke-CheckURLs -URL $URLs
     }
     x {
         $Quit = $true
-        Write-Host "Existing Script" -ForegroundColor Green `n
+        Write-Host "Existing Script" -ForegroundColor Yellow `n
         Stop-Transcript  #Before closing off the script
     }
     Default {}
