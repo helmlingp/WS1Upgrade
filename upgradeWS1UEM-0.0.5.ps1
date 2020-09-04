@@ -114,10 +114,10 @@ $pfxPassword = $WS1Config.globalConfig.sslCertificates.airwatch.pfxPassword
 $pfxCommonName = $WS1Config.globalConfig.sslCertificates.airwatch.pfxCommonName
 
 # Import arrays of VMs to deploy
-$priAppServers = $WS1Config.PrimaryWorkloadServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM") -and ($_.Role -ne "AWCM")}
-$secAppServers = $WS1Config.SecondaryWorkloadServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM") -and ($_.Role -ne "AWCM")}
-$priDMZAppServers = $WS1Config.PrimaryDMZServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM") -and ($_.Role -ne "AWCM")}
-$secDMZAppServers = $WS1Config.SecondaryDMZServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM") -and ($_.Role -ne "AWCM")}
+$priAppServers = $WS1Config.PrimaryWorkloadServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM")}
+$secAppServers = $WS1Config.SecondaryWorkloadServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM")}
+$priDMZAppServers = $WS1Config.PrimaryDMZServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM")}
+$secDMZAppServers = $WS1Config.SecondaryDMZServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM")}
 $PriDBServers = $WS1Config.PrimaryWorkloadServers.servers | Where-Object {$_.Role -like "DB"}
 $secDBServers = $WS1Config.SecondaryWorkloadServers.servers | Where-Object {$_.Role -like "DB"}
 $URLs = $WS1Config.PrimaryWorkloadServers.URLs
