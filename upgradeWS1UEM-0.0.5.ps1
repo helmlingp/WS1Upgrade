@@ -11,7 +11,7 @@
             \Cert - contains the certificate used for application servers
             \Configs - contains WS1 UEM installer config.xml files with role based names (CN_ConfigScript.xml, API_ConfigScript.xml, AWCM_ConfigScript.xml, DS_ConfigScript.xml)
             \DB - contains the extracted DB Server installer files
-            \Prereqs - contains Java runtime (jre*.exe) and dotNET Framework runtime (ndp*.exe)
+            \Prereqs - contains Java runtime (jre*.exe) and dotNET Framework runtime (ndp*.exe) versions that are specified by WS1 UEM version you are upgrading to
         \Tools - containing 7z1900-x64.exe
   .NOTES
 	  Created:   	    May, 2019
@@ -1435,7 +1435,7 @@ Function Invoke-Menu {
     Write-Host "9: Test Site URLs" -ForegroundColor Cyan `n
     Write-Host "Type 'x' to exit" -ForegroundColor Red
     Write-Host `n
-    $Selection = (Read-Host "Select the task you would like to execute").ToLower() -ForegroundColor Cyan
+    $Selection = (Read-Host "Select the task you would like to execute").ToLower()
     return $Selection
 }
 
