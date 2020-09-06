@@ -152,7 +152,7 @@ Function Invoke-StageFiles {
         }
 
         if($connectby -eq "WinRMFQDN" -Or $connectby -eq "WinRMIP") {
-            Invoke-PSCopy -vmName $vmName -Session $Session}
+            Invoke-PSCopy -vmName $vmName -Session $Session -vmRole $vmRole}
         elseif ($connectby -eq "VMTOOLS") {
             Invoke-VMToolsCopy -vmName $vmName -vmFqdn $vmFqdn -vmRole $vmRole -stagevCenter $stagevCenter}
         else {
@@ -523,6 +523,7 @@ Function Invoke-VMToolsCopy {
     param(
         [String] $vmName,
         [String] $vmFqdn,
+        [String] $vmRole,
         [String] $stagevCenter
         #[String] $vcCreds
     )
@@ -589,8 +590,6 @@ $drivefree = $drive.Free/1GB
                 
                 Disconnect-VIServer * -Force -Confirm:$false
                 
-                $CheckVMToolsCopy =  $true
-                return $CheckVMToolsCopy
             }
         }
     }
@@ -599,6 +598,7 @@ $drivefree = $drive.Free/1GB
 Function Invoke-PSCopy {
     param(
         [String] $vmName,
+        [String] $vmRole,
         $Session
     )
 
@@ -625,50 +625,27 @@ Function Invoke-PSCopy {
             } Else {
                 #Base Directory exists
             }
-            
-<#             $existsdestInstallerDir = Invoke-Command -Session $Session -ScriptBlock {Test-Path -Path $using:destInstallerDir}
-            If (! $existsdestInstallerDir) {
-                #Create destination Installer folders
-                Write-Host "Creating $destInstallerDir folder in $destinationDir to $vmName" -ForegroundColor Green
-                Invoke-Command -Session $Session -ScriptBlock {New-Item -Path $using:destInstallerDir -ItemType Directory -Force}
-            } Else {
-                #Installer Directory exists
-            }
-
-            $existsdesttoolsDir = Invoke-Command -Session $Session -ScriptBlock {Test-Path -Path $using:desttoolsDir}
-            If (! $existsdesttoolsDir) {
-                #Create destination Tools folders
-                Write-Host "Creating $desttoolsDir folder in $destinationDir to $vmName" -ForegroundColor Green
-                Invoke-Command -Session $Session -ScriptBlock {New-Item -Path $using:desttoolsDir -ItemType Directory -Force}
-            } Else {
-                #Tools Directory exists
-            } #>
 
             #Copy Tools files to destination $destToolsDir
             write-host "Copying ToolsDir files to $vmName" -ForegroundColor Green
             Copy-Item -ToSession $session -Path $toolsDir -Destination $desttoolsDir -Recurse -Force -Confirm:$false
-                        
+            
             #Copy installer zip files to destination directory
-            Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destinationDir -Recurse -Force -Confirm:$false
-            #Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destInstallerDir -Recurse -Force -Confirm:$false
-<#             $WS1InstallerZipFiles = Get-ChildItem -Path $InstallerDir | Where-Object { $_ -like "*.zip" }
-            foreach ($file in $WS1InstallerZipFiles) {
-                Write-Host "Copying $file of a $($WS1InstallerZipFiles.count) total files to $vmName" -ForegroundColor Green
-                Copy-Item -ToSession $Session -Path $file.FullName -Destination $destinationDir -Recurse -Force -Confirm:$false
-                $destzipfile = $destinationDir + "\" + $file
-                write-host "Expanding $destzipfile to $destInstallerDir" -ForegroundColor Green
-                Invoke-Command -session $Session -ScriptBlock {Expand-Archive -Path "$using:destzipfile" -DestinationPath "$using:destInstallerDir" -Force}
-            } #>
+            if ($vmRole -ne "DB") {
+                write-host "Copying Installer files to $vmName" -ForegroundColor Green
+                Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destinationDir -Exclude "DB" -Recurse -Force -Confirm:$false
+            } Elseif ($vmRole -eq "DB") {
+                write-host "Copying Installer files to $vmName" -ForegroundColor Green
+                Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destinationDir -Exclude "Application" -Recurse -Force -Confirm:$false
+            }
+
         #Disconnect from Windows Server
         Remove-PSSession $Session
-        
-        $CheckPSCopy =  $true
-        return $CheckPSCopy
+
         } 
 	} else {
-	write-host "no PSSession for $vmName"
-        $CheckPSCopy =  $false
-        return $CheckPSCopy
+    	Write-Host "Failed to create PSSession for $vmName, so couldn't copy files"
+
     }
 }
 
@@ -679,15 +656,10 @@ function Invoke-CheckVMConnectivity{
         [string]$vmFqdn,
         [string]$vmIP
 	) 
-    #called by other functions before their action - eg Pre-req,Staging,Phase1 Install, Phase 2 DB cmds, Phase App cmds
-    # Check if PSRemoting is enabled and functional
-<#     if((Test-NetConnection -ComputerName $Computer -Port 5986).TcpTestSucceeded -eq $true) {
-        $result.stdout += "WinRM enabled successfully.`n"
-    } #>
-	
+
     if (Test-WsMan -ComputerName $vmFqdn) {
         Write-Host "Connected to $vmFqdn over the network!" `n -ForegroundColor Green
-		$connection = "WinRMFQDN"}
+        $connection = "WinRMFQDN"}
     elseif (Test-WsMan -ComputerName $vmIP){ 
         Write-Host "Connected to $vmName ($vmIP) via IP over the network!" `n -ForegroundColor Green
         $connection = "WinRMIP"}
