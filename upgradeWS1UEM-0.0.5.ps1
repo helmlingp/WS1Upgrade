@@ -17,6 +17,8 @@
 	 * Download and install the Secure Channel Certificate on AWCM Server(s) from Groups & Settings > System > Advanced > Secure Channel Certificate 
 	 * Obtain INSTALL_TOKEN from https://my.workspaceone.com > My Workspace ONE > My Company > Certificate Signing Portal > Authorize Install, and update environment.JSON
 	 * Obtain COMPANY_NAME from existing server HKLM:\SOFTWARE\WOW6432Node\AirWatch\AWGEMCOMPANY, and update environment.JSON & Configs\*_ConfigScript.xml files 
+     * Complete VM Creation functions
+     * Build NSX Load Balancer VIP changes function
   .NOTES
 	  Created:   	    May, 2019
 	  Updated:			August, 2020
