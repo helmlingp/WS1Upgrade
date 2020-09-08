@@ -4,24 +4,31 @@
     It requires a JSON file with configuration of the environment.
     Requirements include:
      * VMware PowerCLI Module (will be imported automatically)
-     * env.json file
+     * environment.JSON file in same directory as script
      * Subfolders
         \Installer
-            \Application - contains the extracted Application Server installer files
+            \Application - contains the extracted Application Server installer files, copied from Full Installer archive
+				\Patch - contain the extracted contents of the Patch Archive Application folder
             \Cert - contains the certificate used for application servers
             \Configs - contains WS1 UEM installer config.xml files with role based names (CN_ConfigScript.xml, API_ConfigScript.xml, AWCM_ConfigScript.xml, DS_ConfigScript.xml)
-            \DB - contains the extracted DB Server installer files
-            \Prereqs - contains Java runtime (jre*.exe) and dotNET Framework runtime (ndp*.exe) versions that are specified by WS1 UEM version you are upgrading to
+            \DB - contains the extracted DB Server installer files, copied from Full Installer archive. Also should contain DB folder contents from Patch Archive
+            \Prereqs - contains Java runtime (jre*.exe) and dotNET Framework runtime (ndp*.exe) to match version requirements - https://docs.vmware.com/en/VMware-Workspace-ONE-UEM/2005/UEM_Installation/GUID-AWT-INSTALLATION-PROCEDURE-CHECKLIST.html
         \Tools - containing 7z1900-x64.exe
+	 * Download and install the Secure Channel Certificate on AWCM Server(s) from Groups & Settings > System > Advanced > Secure Channel Certificate 
+	 * Obtain INSTALL_TOKEN from https://my.workspaceone.com > My Workspace ONE > My Company > Certificate Signing Portal > Authorize Install, and update environment.JSON
+	 * Obtain COMPANY_NAME from existing server HKLM:\SOFTWARE\WOW6432Node\AirWatch\AWGEMCOMPANY, and update environment.JSON & Configs\*_ConfigScript.xml files 
   .NOTES
 	  Created:   	    May, 2019
+	  Updated:			August, 2020
 	  Created by:	    Phil Helmling, @philhelmling
-	  Organization:   VMware, Inc.
-	  Filename:       upgradeWS1UEM-0.0.4.ps1
+	  Organization:   	VMware, Inc.
+	  Filename:       	upgradeWS1UEM-0.0.5.ps1
+	  Todo:				Include install of Secure Channel Certificate on AWCM Server in PHASE 2 Install.
+						Lookup AWGEMCOMPANY from HKLM:\SOFTWARE\WOW6432Node\AirWatch\AWGEMCOMPANY and provide to Phase 2 Install
 	.DESCRIPTION
 	  This powershell script automates stages of a WS1 UEM upgrade using a menu selection for each phase.
   .EXAMPLE
-    powershell.exe -ep bypass -file .\upgradeWS1UEM-0.0.4.ps1 WS1Config.json
+    powershell.exe -ep bypass -file .\upgradeWS1UEM-0.0.5.ps1 WS1Config.json
 #>
 
 $current_path = $PSScriptRoot;
@@ -108,11 +115,21 @@ $DBInstallerDir = $WS1Config.globalConfig.deploymentDirectories.DBInstallerDir
 $AppInstallerDir = $WS1Config.globalConfig.deploymentDirectories.AppInstallerDir
 #Remote Dirs
 $destinationDir = $WS1Config.globalConfig.deploymentDirectories.destinationDir
-# CA SSL Certificate config
-$pfxFileName = $WS1Config.globalConfig.sslCertificates.airwatch.pfxFileName
-$pfxPassword = $WS1Config.globalConfig.sslCertificates.airwatch.pfxPassword
-$pfxCommonName = $WS1Config.globalConfig.sslCertificates.airwatch.pfxCommonName
-
+$destInstallerDir = $destinationDir + "\" + $WS1Config.globalConfig.deploymentDirectories.InstallerDir
+$desttoolsDir = $destinationDir + "\" + $WS1Config.globalConfig.deploymentDirectories.toolsDir
+$destConfigDir = $destInstallerDir + "\" + $configDir
+$AppInstallDestDir = $destInstallerDir + "\" + $AppInstallerDir
+$PatchDestDir = $AppInstallDestDir + "\" + $WS1Config.globalConfig.deploymentDirectories.patchDir
+$CopytoSQLServer = $InstallerDir + "\" + $DBInstallerDir
+$destprereqsDir = $destInstallerDir + "\" + $PrereqsDir
+#CA SSL Certificate config
+$pfxFileName = $WS1Config.globalConfig.sslCertificates.pfxFileName
+$pfxPassword = $WS1Config.globalConfig.sslCertificates.pfxPassword
+$pfxCommonName = $WS1Config.globalConfig.sslCertificatespfxCommonName
+#Other Variables
+$INSTALL_TOKEN = $WS1Config.globalConfig.License.INSTALL_TOKEN
+$COMPANY_NAME  = $WS1Config.globalConfig.License.COMPANY_NAME
+$destcert = $destInstallerDir + "\" + $certDir + "\" + $pfxFileName
 # Import arrays of VMs to deploy
 $priAppServers = $WS1Config.PrimaryWorkloadServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM")}
 $secAppServers = $WS1Config.SecondaryWorkloadServers.servers | Where-Object {($_.Role -ne "DB") -and ($_.Role -ne "vIDM")}
@@ -123,7 +140,7 @@ $secDBServers = $WS1Config.SecondaryWorkloadServers.servers | Where-Object {$_.R
 $URLs = $WS1Config.PrimaryWorkloadServers.URLs
 
 #ask for Credentials to connect to Windows VMs using PS-Execute
-$Credential = $host.ui.PromptForCredential("Windows credentials", "Please enter your Windows user name and password for Windows VMs.", "", "")
+$Credential = $host.ui.PromptForCredential("Windows Guest Administrator Credentials", "Please enter a Windows Administrator Username and password to install software into the Guest VMs.", "", "")
 
 Function Invoke-StageFiles {
     param(
@@ -152,7 +169,7 @@ Function Invoke-StageFiles {
         }
 
         if($connectby -eq "WinRMFQDN" -Or $connectby -eq "WinRMIP") {
-            Invoke-PSCopy -vmName $vmName -Session $Session -vmRole $vmRole}
+            Invoke-PSCopy -vmName $vmName -Session $Session}
         elseif ($connectby -eq "VMTOOLS") {
             Invoke-VMToolsCopy -vmName $vmName -vmFqdn $vmFqdn -vmRole $vmRole -stagevCenter $stagevCenter}
         else {
@@ -228,42 +245,10 @@ function Invoke-InstallPrereqs {
         [array] $vmArray,
         [String] $stagevCenter
     )
-    Write-Host "--------------------------PREREQS--------------------------" `n -ForegroundColor Yellow
+    Write-Host "----------------------INSTALL PREREQS--------------------------" `n -ForegroundColor Yellow
 
-    $destcertDir = $destinationDir + "\" + $InstallerDir + "\" + $certDir
-    $destprereqsDir = $destinationDir + "\" + $InstallerDir + "\" + $PrereqsDir
-    $pfxDestinationFilePath = $destprereqsDir + "\" + $InstallerDir + "\" + $pfxFileName
-    # Trusted SSL certificate install script
-$importPfxScript = @"
-CMD /C CertUtil -f -p "$pfxPassword" -importpfx "$pfxDestinationFilePath"
-"@
 
-    # WS1 Prereqs install script
-$airwatchPreRequisitesScript = @"
-# Add server roles
-Install-WindowsFeature Web-Server, Web-WebServer, Web-Common-Http, Web-Default-Doc, Web-Dir-Browsing, Web-Http-Errors, Web-Static-Content, Web-Http-Redirect, Web-Health, Web-Http-Logging, Web-Custom-Logging, Web-Log-Libraries, Web-Request-Monitor, Web-Http-Tracing, Web-Performance, Web-Stat-Compression, Web-Dyn-Compression, Web-Security, Web-Filtering, Web-IP-Security, Web-App-Dev, Web-Net-Ext, Web-Net-Ext45, Web-AppInit, Web-ASP, Web-Asp-Net, Web-Asp-Net45, Web-ISAPI-Ext, Web-ISAPI-Filter, Web-Includes, Web-Mgmt-Tools, Web-Mgmt-Console, Web-Mgmt-Compat, Web-Metabase -Source $windowsDestinationSxsFolderPath
-
-# Add server features
-Install-WindowsFeature NET-Framework-Features, NET-Framework-Core, NET-Framework-45-Features, NET-Framework-45-Core, NET-Framework-45-ASPNET, NET-WCF-Services45, NET-WCF-HTTP-Activation45, NET-WCF-MSMQ-Activation45, NET-WCF-Pipe-Activation45, NET-WCF-TCP-Activation45, NET-WCF-TCP-PortSharing45, MSMQ, MSMQ-Services, MSMQ-Server, Telnet-Client
-
-# Get the certificate thumbprint
-`$certThumbprint = (Get-ChildItem Cert:\LocalMachine\My | Where {`$_.Subject -like "*CN=$pfxCommonName*"} | Select-Object -First 1).Thumbprint
-
-# IIS site mapping ip/hostheader/port to cert - also maps certificate if it exists for the particular ip/port/hostheader combo
-New-WebBinding -name "Default Web Site" -Protocol https -HostHeader $pfxcommonName -Port 443 -SslFlags 1 #-IP "*"
-
-# Bind certificate to IIS site
-`$bind = Get-WebBinding -Name "Default Web Site" -Protocol https -HostHeader $pfxcommonName
-`$bind.AddSslCertificate(`$certThumbprint, "My")
-"@
-
-    #Set Services Timeout Registry key
-$servicesTimeoutRegistryCmd = @"
-$registryPath = "HKLM:\SYSTEM\CurrentControlSet\Control"
-$dwordName = "ServicesPipeTimeout"
-$dwordValue = "180000"
-New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type DWORD -Force | Out-Null
-"@
+    #$pfxDestinationFilePath = $destcertDir + "\" + $pfxFileName
 
     for($i = 0; $i -lt $vmArray.count; $i++){
         #Skip null or empty properties.
@@ -285,54 +270,94 @@ New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type D
 
         if($connectby -eq "WinRMFQDN" -Or $connectby -eq "WinRMIP") {
             #Import Cert
-            Write-Host "Importing Certificate on $vmName" `n -ForegroundColor Green
-            Invoke-Command -Session $Session -ScriptBlock $importPfxScript
+            Write-Host "Importing Certificate $destcert on $vmName" `n -ForegroundColor Green
+            Invoke-Command -Session $Session -ScriptBlock {CMD /C CertUtil.exe -f -p `"$using:pfxPassword`" -importpfx `"$using:destcert`"}
 
             # Run the AirWatch prerequisite install script
             Write-Host "Running the AirWatch prequisite installation script on $vmName" `n -ForegroundColor Green
-            Invoke-Command -Session $Session -ScriptText $airwatchPreRequisitesScript
+            Invoke-Command -Session $Session -ScriptBlock {
+			# Add server roles
+			write-host "Adding Windows Server Roles"
+			Install-WindowsFeature Web-Server, Web-WebServer, Web-Common-Http, Web-Default-Doc, Web-Dir-Browsing, Web-Http-Errors, Web-Static-Content, Web-Http-Redirect, Web-Health, Web-Http-Logging, Web-Custom-Logging, Web-Log-Libraries, Web-Request-Monitor, Web-Http-Tracing, Web-Performance, Web-Stat-Compression, Web-Dyn-Compression, Web-Security, Web-Filtering, Web-IP-Security, Web-App-Dev, Web-Net-Ext, Web-Net-Ext45, Web-AppInit, Web-ASP, Web-Asp-Net, Web-Asp-Net45, Web-ISAPI-Ext, Web-ISAPI-Filter, Web-Includes, Web-Mgmt-Tools, Web-Mgmt-Console, Web-Mgmt-Compat, Web-Metabase
+
+			# Add server features
+			write-host "Adding Windows Server Features"
+			Install-WindowsFeature NET-Framework-Features, NET-Framework-Core, NET-Framework-45-Features, NET-Framework-45-Core, NET-Framework-45-ASPNET, NET-WCF-Services45, NET-WCF-HTTP-Activation45, NET-WCF-MSMQ-Activation45, NET-WCF-Pipe-Activation45, NET-WCF-TCP-Activation45, NET-WCF-TCP-PortSharing45, MSMQ, MSMQ-Services, MSMQ-Server, Telnet-Client
+
+			# Get the certificate thumbprint
+			$certThumbprint = (Get-ChildItem Cert:\LocalMachine\My | Where {$_.Subject -like "*CN=$using:pfxCommonName*"} | Select-Object -First 1).Thumbprint
+			write-host "*CN=$using:pfxCommonName* & certThumbprint = $certThumbprint"
+			
+			# Bind certificate to IIS site
+			write-host "binding cert to Default Web Site https 443"
+			New-WebBinding -Name "Default Web Site" -Port 443 -Protocol https
+			$bind = Get-WebBinding -Name "Default Web Site" -Protocol https
+			$bind.AddSslCertificate($certThumbprint, "My")
+			}
             
             # Run the .NET install CMD
             $dotNetDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include ndp48*.exe -Recurse -ErrorAction SilentlyContinue}
             #$dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath /q /norestart`""
-            Write-Host "Installing .Net on $vmName" `n -ForegroundColor Green
+            Write-Host "Installing $dotNetDestinationPath on $vmName" `n -ForegroundColor Green
             Invoke-Command -Session $Session -ScriptBlock {CMD /C `"$using:dotNetDestinationPath /q /norestart`"}
             
             # Run the Java install CMD
             $javaDestinationPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include jre*.exe -Recurse -ErrorAction SilentlyContinue}
             #$JavaInstallCMD = "CMD /C `"$javaDestinationPath INSTALL_SILENT=Enable SPONSORS=0`""
-            Write-Host "Installing Java on $vmName" `n -ForegroundColor Green
+            Write-Host "Installing $javaDestinationPath on $vmName" `n -ForegroundColor Green
             Invoke-Command -Session $Session -ScriptBlock {CMD /C `"$using:javaDestinationPath INSTALL_SILENT=Enable SPONSORS=0`"}
 
             #Set Services Timeout Registry key
             Write-Host "Setting Services Timeout Registry key on $vmName" `n -ForegroundColor Green
-            Invoke-Command -Session $Session -ScriptBlock $servicesTimeoutRegistryCmd
+            Invoke-Command -Session $Session -ScriptBlock {New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control" -Name "ServicesPipeTimeout" -Value 180000 -Type DWORD -Force | Out-Null}
 
         } elseif ($connectby -eq "VMTOOLS") {
-
-            #Import Cert
+			# Trusted SSL certificate install script
+$importPfxScript = @"
+CMD /C CertUtil -f -p "$pfxPassword" -importpfx "$destcert"
+"@
             Write-Host "Importing Certificate on $vmName" `n -ForegroundColor Green
             Invoke-VMScript -ScriptText $importPfxScript -VM $vmName -GuestCredential $Credential -ScriptType powershell
 
             # Run the AirWatch prerequisite install script
+$airwatchPreRequisitesScript = @"
+# Add server roles
+Install-WindowsFeature Web-Server, Web-WebServer, Web-Common-Http, Web-Default-Doc, Web-Dir-Browsing, Web-Http-Errors, Web-Static-Content, Web-Http-Redirect, Web-Health, Web-Http-Logging, Web-Custom-Logging, Web-Log-Libraries, Web-Request-Monitor, Web-Http-Tracing, Web-Performance, Web-Stat-Compression, Web-Dyn-Compression, Web-Security, Web-Filtering, Web-IP-Security, Web-App-Dev, Web-Net-Ext, Web-Net-Ext45, Web-AppInit, Web-ASP, Web-Asp-Net, Web-Asp-Net45, Web-ISAPI-Ext, Web-ISAPI-Filter, Web-Includes, Web-Mgmt-Tools, Web-Mgmt-Console, Web-Mgmt-Compat, Web-Metabase -Source $windowsDestinationSxsFolderPath
+
+# Add server features
+Install-WindowsFeature NET-Framework-Features, NET-Framework-Core, NET-Framework-45-Features, NET-Framework-45-Core, NET-Framework-45-ASPNET, NET-WCF-Services45, NET-WCF-HTTP-Activation45, NET-WCF-MSMQ-Activation45, NET-WCF-Pipe-Activation45, NET-WCF-TCP-Activation45, NET-WCF-TCP-PortSharing45, MSMQ, MSMQ-Services, MSMQ-Server, Telnet-Client
+
+# Get the certificate thumbprint
+$certThumbprint = (Get-ChildItem Cert:\LocalMachine\My | Where {$_.Subject -like "*CN=$using:pfxCommonName*"} | Select-Object -First 1).Thumbprint
+write-host "*CN=$using:pfxCommonName* & certThumbprint = $certThumbprint"
+
+# Bind certificate to IIS site
+write-host "binding cert to Default Web Site https 443"
+New-WebBinding -Name "Default Web Site" -Port 443 -Protocol https
+$bind = Get-WebBinding -Name "Default Web Site" -Protocol https
+$bind.AddSslCertificate($certThumbprint, "My")
+"@
             Write-Host "Running the AirWatch prequisite installation script on $vmName" `n -ForegroundColor Green
             Invoke-VMScript -ScriptText $airwatchPreRequisitesScript -VM $vmName -GuestCredential $Credential -ScriptType powershell
             
             # Run the .NET install CMD
-            $dotNetDestinationPathcmd = "Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include ndp48*.exe -Recurse -ErrorAction SilentlyContinue}"
+            $dotNetDestinationPathcmd = "Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $destprereqsDir -Include ndp48*.exe -Recurse -ErrorAction SilentlyContinue}"
             $dotNetDestinationPath = Invoke-VMScript -ScriptText $dotNetDestinationPathcmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
-            $dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath /q /norestart`""
-            Write-Host "Installing .Net on $vmName" `n -ForegroundColor Green
+            $dotNetInstallCMD = "CMD /C `"$dotNetDestinationPath`" /q /norestart"
+            Write-Host "Installing $dotNetDestinationPathcmd on $vmName" `n -ForegroundColor Green
             Invoke-VMScript -ScriptText $dotNetInstallCMD -VM $vmName -GuestCredential $Credential -ScriptType powershell
             
             # Run the Java install CMD
-            $javaDestinationPathcmd = "Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:destprereqsDir -Include jre*.exe -Recurse -ErrorAction SilentlyContinue}"
+            $javaDestinationPathcmd = "Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $destprereqsDir -Include jre*.exe -Recurse -ErrorAction SilentlyContinue}"
             $javaDestinationPath = Invoke-VMScript -ScriptText $javaDestinationPathcmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
-            $JavaInstallCMD = "CMD /C `"$javaDestinationPath INSTALL_SILENT=Enable SPONSORS=0`""
-            Write-Host "Installing Java on $vmName" `n -ForegroundColor Green
+            $JavaInstallCMD = "CMD /C `"$javaDestinationPath`" INSTALL_SILENT=Enable SPONSORS=0"
+            Write-Host "Installing $javaDestinationPathcmd on $vmName" `n -ForegroundColor Green
             Invoke-VMScript -ScriptText $JavaInstallCMD -VM $vmName -GuestCredential $Credential -ScriptType powershell
 
             #Set Services Timeout Registry key
+$servicesTimeoutRegistryCmd = @"
+New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control" -Name "ServicesPipeTimeout" -Value 180000 -Type DWORD -Force | Out-Null
+"@
             Write-Host "Setting Services Timeout Registry key on $vmName" `n -ForegroundColor Green
             Invoke-VMScript -ScriptText $servicesTimeoutRegistryCmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
 
@@ -358,18 +383,10 @@ New-ItemProperty -Path $registryPath -Name $dwordName -Value $dwordValue -Type D
 
 function Invoke-InstallPhase1 {
     param(
-        [array]$vmArray,
+        [array] $vmArray,
         [String] $stagevCenter
     )
-    Write-Host "--------------------------PHASE 1--------------------------" `n -ForegroundColor Yellow
-
-    $destprereqsDir = $destinationDir + "\" + $InstallerDir + "\" + $configDir
-    $ConfigFile = $vmRole + "_ConfigScript.xml"
-    $AppInstallDestBinary = $destinationDir + "\" + $InstallerDir + "\" + $AppInstallerDir
-
-$installAppScriptBlock = @"
-CMD /C #AppInstallDestBinary# /s /V`"/qn /lie $destinationDir\AppInstall.log TARGETDIR=$INSTALLDIR INSTALLDIR=$INSTALLDIR AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$ConfigFile`"
-"@
+    Write-Host "--------------------INSTALL PHASE 1--------------------------" `n -ForegroundColor Yellow
 
     for($i = 0; $i -lt $vmArray.count; $i++){ 
         #Skip null or empty properties.
@@ -378,7 +395,8 @@ CMD /C #AppInstallDestBinary# /s /V`"/qn /lie $destinationDir\AppInstall.log TAR
         $vmFqdn = $vmArray[$i].FQDN
         $vmIP = $vmArray[$i].IP
         $vmRole = $vmArray[$i].Role
-        
+        $ConfigFile = $destConfigDir + "\" + $vmRole + "_ConfigScript.xml"
+	
         $connectby = Invoke-CheckVMConnectivity -vmName $vmName -vmFqdn $vmFqdn -vmIP $vmIP -stagevCenter $stagevCenter
         if($connectby -eq "WinRMFQDN") {
             $Session = Invoke-CreatePsSession -ServerFqdn $vmFqdn
@@ -389,44 +407,34 @@ CMD /C #AppInstallDestBinary# /s /V`"/qn /lie $destinationDir\AppInstall.log TAR
         }
 
         if($connectby -eq "WinRMFQDN" -Or $connectby -eq "WinRMIP") {
+			Write-Host "Installing Workspace ONE UEM Application Server on $vmName" `n -ForegroundColor Yellow
             # Run the command to install the AirWatch App  
-            $installAppDestPath = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:AppInstallDestBinary -Include WorkspaceONE_UEM_Application*.exe -Recurse -ErrorAction SilentlyContinue}
-            $updinstallAppScriptBlock = $installAppScriptBlock -replace "#AppInstallDestBinary#", $installAppDestPath
-            $installSuccessfull = Invoke-Command -Session $Session -ScriptBlock $updinstallAppScriptBlock 
-            
-            #Check the install worked by looking for this line in the publish log file - "Updating database (Complete)"
-            If($installSuccessfull -notlike "*Installation operation completed successfully*"){
-                #throw "Failed to setup AirWatch App. Could not find a line in the Publish log that contains `"Installation operation completed successfully`""
-            } Else {
-                Write-Host "WS1 AppServer has been successfully installed on $vmName" `n -ForegroundColor Green
-            }
+            $AppInstallDestBinary = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:AppInstallDestDir -Include WorkspaceONE_UEM_Application*.exe -Recurse -ErrorAction SilentlyContinue}
+            Invoke-Command -Session $Session -ScriptBlock {CMD /C $using:AppInstallDestBinary /s /V`"/qn /lie $destinationDir\AppInstall.log TARGETDIR=$using:destinationDir INSTALLDIR=$using:destinationDir AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$using:ConfigFile`"}
             
             #Copy SQL Scripts in Application installer directory to SQL Server via this machine
-            $CopytoSQLServer = Join-Path -Path $current_path -ChildPath $DBInstallerDir
-            Copy-Item -FromSession $Session -Path $AppInstallDestBinary"\*.sql" -Destination $CopytoSQLServer -Force -Confirm:$false
+            Copy-Item -FromSession $Session -Path $AppInstallDestDir"\*.sql" -Destination $CopytoSQLServer -Force -Confirm:$false
             Write-Host "Important:" `n -ForegroundColor Yellow
-            Write-Host "Please copy the $CopytoSQLServer folder including the SQL script files (*.sql) to the SQL Server." `n -ForegroundColor Yellow
-            Write-Host "Run the DB upgrade installer followed by these scripts against the WS1 database, AFTER database upgrade!" `n -ForegroundColor Yellow
+            Write-Host "Please copy the $CopytoSQLServer folder including the SQL script files (*.sql) to the SQL Server." -ForegroundColor Yellow
+            Write-Host "Run the DB upgrade installer(s) followed by these scripts against the WS1 database AFTER database upgrade!" -ForegroundColor Yellow
         } elseif ($connectby -eq "VMTOOLS") {
             # Run the command to install the AirWatch App
-            $installAppDestPathcmd = "Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:AppInstallDestBinary -Include WorkspaceONE_UEM_Application*.exe -Recurse -ErrorAction SilentlyContinue}"
-            $installAppDestPath = Invoke-VMScript -ScriptText $installAppDestPathcmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
-            $updinstallAppScriptBlock = $installAppScriptBlock -replace "#AppInstallDestBinary#", $installAppDestPath
-            $installSuccessfull = Invoke-VMScript -ScriptText $updinstallAppScriptBlock -VM $vmName -GuestCredential $Credential -ScriptType powershell
-            
-            #Check the install worked by looking for this line in the publish log file - "Updating database (Complete)"
-            If($installSuccessfull -notlike "*Installation operation completed successfully*"){
-                #throw "Failed to setup AirWatch App. Could not find a line in the Publish log that contains `"Installation operation completed successfully`""
-            } Else {
-                Write-Host "WS1 AppServer has been successfully installed on $vmName" `n -ForegroundColor Green
-            }
+$installAppDestPathcmd = @"
+Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $AppInstallDestDir -Include WorkspaceONE_UEM_Application*.exe -Recurse -ErrorAction SilentlyContinue}
+"@
+            $AppInstallDestBinary = Invoke-VMScript -ScriptText $installAppDestPathcmd -VM $vmName -GuestCredential $Credential -ScriptType powershell
+			
+$installAppScriptBlock = @"
+CMD /C #AppInstallDestBinary# /s /V`"/qn /lie $destinationDirAppInstall.log TARGETDIR=$destinationDir INSTALLDIR=$destinationDir AWIGNOREBACKUP=true AWSTAGEAPP=true AWSETUPCONFIGFILE=$ConfigFile"
+"@
+			$updinstallAppScriptBlock = $installAppScriptBlock -replace "#AppInstallDestBinary#", $AppInstallDestBinary
+            Invoke-VMScript -ScriptText $updinstallAppScriptBlock -VM $vmName -GuestCredential $Credential -ScriptType powershell
 
             #Copy SQL Scripts in Application installer directory to SQL Server via this machine
-            $CopytoSQLServer = Join-Path -Path $current_path -ChildPath $DBInstallerDir
-            Copy-VMGuestFile -Source $AppInstallDestBinary"\*.sql" -Destination $CopytoSQLServer -VM myVM -GuestToLocal -GuestCredential $Credential
+            Copy-VMGuestFile -Source $AppInstallDestDir"\*.sql" -Destination $CopytoSQLServer -VM myVM -GuestToLocal -GuestCredential $Credential
             Write-Host "Important:" `n -ForegroundColor Yellow
-            Write-Host "Please copy the $CopytoSQLServer folder including the SQL script files (*.sql) to the SQL Server." `n -ForegroundColor Yellow
-            Write-Host "Run the DB upgrade installer followed by these scripts against the WS1 database, AFTER database upgrade!" `n -ForegroundColor Yellow
+            Write-Host "Please copy the $CopytoSQLServer folder including the SQL script files (*.sql) to the SQL Server." -ForegroundColor Yellow
+            Write-Host "Run the DB upgrade installer(s) followed by these scripts against the WS1 database AFTER database upgrade!" -ForegroundColor Yellow
         } else {
             Write-Host "Cannot Connect to Server $vmName to do Phase 1 Install" `n -ForegroundColor Red
         }
@@ -439,30 +447,26 @@ function Invoke-InstallPhase2 {
         [String] $stagevCenter
     )
 
-    Write-Host "--------------------------PREREQS--------------------------" `n -ForegroundColor Yellow
+    Write-Host "-------------------INSTALL PHASE 2--------------------------" `n -ForegroundColor Yellow
 
-    $destprereqsDir = $destinationDir + "\" + $InstallerDir + "\" + $configDir
-    $ConfigFile = $vmRole + "_ConfigScript.xml"
-    $INSTALL_TOKEN = $WS1Config.globalConfig.INSTALL_TOKEN
-    $COMPANY_NAME  = $WS1Config.globalConfig.COMPANY_NAME
-    $certinstallerpath = "Supplimental Software\CertInstaller\CertificateInstaller.exe"
-    $GEMcertinstallerpath = "Supplimental Software\GEM_Certificate_Install\GEMCertificateInstaller.exe"
-    $branchcacheserverkeyinstallerpath = "Supplimental Software\Tools\BranchCacheServerKeyUtility\BranchCacheServerKeyInstaller.exe"
+    $certinstallerpath = "Supplemental Software\CertInstaller\CertificateInstaller.exe"
+    $GEMcertinstallerpath = "Supplemental Software\Tools\GEM_Certificate_Install\GEMCertificateInstaller.exe"
+    $branchcacheserverkeyinstallerpath = "Supplemental Software\Tools\BranchCacheServerKeyUtility\BranchCacheServerKeyInstaller.exe"
 
 $AllAppServers_ScriptBlock = @"
-Start-Process -filepath "#AIRWATCHDIR\$certinstallerpath" -ArgumentList "-t `"$INSTALL_TOKEN`"" -wait
+CMD /C "#AWVERSIONDIR#$certinstallerpath" -t "$INSTALL_TOKEN"
 "@
 
 $CN_ScriptBlock = @"
-Start-Process -filepath "#AIRWATCHDIR\$GEMcertinstallerpath" -ArgumentList "`"$COMPANY_NAME`"" -wait
+CMD /C "#AWVERSIONDIR#$GEMcertinstallerpath" -ArgumentList "$COMPANY_NAME"
 "@
 
 $DS_ScriptBlock = @"
-Start-Process -filepath "#AIRWATCHDIR\branchcacheserverkeyinstallerpath" -wait
+CMD /C "#AWVERSIONDIR#$branchcacheserverkeyinstallerpath"
 "@
 
-$getAIRWATCHDIR = @"
-Get-ItemProperty -Path HKLM:\SOFTWARE\WOW6432Node\AirWatch -ErrorAction SilentlyContinue).AWVERSIONDIR
+$getAWVERSIONDIR = @"
+(Get-ItemProperty -Path HKLM:\SOFTWARE\WOW6432Node\AirWatch -ErrorAction SilentlyContinue).AWVERSIONDIR
 "@
     for($i = 0; $i -lt $vmArray.count; $i++){ 
         #Skip null or empty properties.
@@ -482,48 +486,78 @@ Get-ItemProperty -Path HKLM:\SOFTWARE\WOW6432Node\AirWatch -ErrorAction Silently
         }
 
         if($connectby -eq "WinRMFQDN" -Or $connectby -eq "WinRMIP") {
-            $AIRWATCHDIR = Invoke-Command -Session $Session -ScriptBlock $getAIRWATCHDIR
-            $AllAppServers_ScriptBlock_upd = $AllAppServers_ScriptBlock.Replace('#AIRWATCHDIR#',$AIRWATCHDIR)
-            Invoke-Command -Session $Session -ScriptBlock $AllAppServers_ScriptBlock_upd
+			#Patch
+			$PatchDestBinary = Invoke-Command -Session $Session -ScriptBlock {Get-ChildItem -Path $using:PatchDestDir"\*" -Include *.exe -ErrorAction SilentlyContinue}
+			if ($PatchDestBinary){
+				Write-Host "Installing WS1 Patch"
+				Invoke-Command -Session $Session -ScriptBlock {CMD /C $using:PatchDestBinary /s /V/qn}
+			}
+			
+            $AWVERSIONDIR = Invoke-Command -Session $Session -ScriptBlock {(Get-ItemProperty -Path HKLM:\SOFTWARE\WOW6432Node\AirWatch -ErrorAction SilentlyContinue).AWVERSIONDIR}
+            Invoke-Command -Session $Session -ScriptBlock {CMD /C "$using:AWVERSIONDIR$using:certinstallerpath" -t $using:INSTALL_TOKEN}
 
             if ($vmRole -eq "CN"){
-                $CN_ScriptBlock_upd = $CN_ScriptBlock.Replace('#AIRWATCHDIR#',$AIRWATCHDIR)
-                Invoke-Command -Session $Session -ScriptBlock $CN_ScriptBlock_upd
+                #Change to look in HKLM:\SOFTWARE\WOW6432Node\AirWatch\AWGEMCOMPANY string and remove from JSON.
+                Invoke-Command -Session $Session -ScriptBlock {CMD /C "$using:AWVERSIONDIR$using:GEMcertinstallerpath" $using:COMPANY_NAME}
             } 
             if ($vmRole -eq "DS"){
-                $DS_ScriptBlock_upd = $DS_ScriptBlock.Replace('#AIRWATCHDIR#',$AIRWATCHDIR)
-                Invoke-Command -Session $Session -ScriptBlock $DS_ScriptBlock_upd
+                Invoke-Command -Session $Session -ScriptBlock {CMD /C "$using:AWVERSIONDIR$using:branchcacheserverkeyinstallerpath"}
             } 
+			if ($vmRole -eq "AWCM"){
+				write-host "Download and install the Secure Channel Certificate on $vmName from Groups & Settings > System > Advanced > Secure Channel Certificate" `n -ForegroundColor Yellow
+			}
             # Restart IIS to start AirWatch
-            Invoke-Command -Session $Session -ScriptBlock {iisreset}
-            
+            #Invoke-Command -Session $Session -ScriptBlock {iisreset}
         } elseif ($connectby -eq "VMTOOLS") {
-            $AIRWATCHDIR = (Invoke-VMScript -ScriptText $getAIRWATCHDIR -VM $vmName -GuestCredential $Credential -ScriptType powershell).ScriptOutput
-            $AllAppServers_ScriptBlock_upd = $AllAppServers_ScriptBlock.Replace('#AIRWATCHDIR#',$AIRWATCHDIR)
+            #Patch
+			$PatchDestBinary = (Invoke-VMScript -ScriptText {Get-ChildItem -Path $using:PatchDestDir"\*" -Include *.exe -ErrorAction SilentlyContinue} -VM $vmName -GuestCredential $Credential -ScriptType powershell)
+			if ($PatchDestBinary){
+$installPatchScriptBlock = @"
+CMD /C #PatchDestBinary# /S /v/qn"
+"@
+				$updinstallPatchScriptBlock = $installPatchScriptBlock -replace "#PatchDestBinary#", $PatchDestBinary
+				Invoke-VMScript -ScriptText $updinstallAppScriptBlock -VM $vmName -GuestCredential $Credential -ScriptType powershell
+			}
+			$AWVERSIONDIR = (Invoke-VMScript -ScriptText $getAWVERSIONDIR -VM $vmName -GuestCredential $Credential -ScriptType powershell).ScriptOutput
+            $AllAppServers_ScriptBlock_upd = $AllAppServers_ScriptBlock.Replace('#AWVERSIONDIR#',$AWVERSIONDIR)
             Invoke-VMScript -ScriptText $AllAppServers_ScriptBlock_upd -VM $vmName -GuestCredential $Credential -ScriptType powershell
 
             if ($vmRole -eq "CN"){
-                $CN_ScriptBlock_upd = $CN_ScriptBlock.Replace('#AIRWATCHDIR#',$AIRWATCHDIR)
+                $CN_ScriptBlock_upd = $CN_ScriptBlock.Replace('#AWVERSIONDIR#',$AWVERSIONDIR)
                 Invoke-VMScript -ScriptText $CN_ScriptBlock_upd -VM $vmName -GuestCredential $Credential -ScriptType powershell
             } 
             if ($vmRole -eq "DS"){
-                $DS_ScriptBlock_upd = $DS_ScriptBlock.Replace('#AIRWATCHDIR#',$AIRWATCHDIR)
+                $DS_ScriptBlock_upd = $DS_ScriptBlock.Replace('#AWVERSIONDIR#',$AWVERSIONDIR)
                 Invoke-VMScript -ScriptText $DS_ScriptBlock_upd -VM $vmName -GuestCredential $Credential -ScriptType powershell
             } 
-            
+            if ($vmRole -eq "AWCM"){
+				write-host "Download and install the Secure Channel Certificate on $vmName from Groups & Settings > System > Advanced > Secure Channel Certificate" `n -ForegroundColor Yellow
+			}
             # Restart IIS to start AirWatch
-            Invoke-VMScript -ScriptText "iisreset" -VM $vmName -GuestCredential $Credential -ScriptType powershell
+            #Invoke-VMScript -ScriptText "iisreset" -VM $vmName -GuestCredential $Credential -ScriptType powershell
         } else {
-            Write-Host "Cannot Connect to Server $vmName to do Phase 1 Install" `n -ForegroundColor Red
+            Write-Host "Cannot Connect to Server $vmName to do Phase 2 Install" `n -ForegroundColor Red
         }
+		#Restart to allow services to restart
+		Write-Host "Restarting $vmName to complete Phase 2" `n -ForegroundColor Yellow
+		if($connectby -eq "WinRMFQDN") {
+			Restart-Computer -ComputerName $vmFqdn -Credential $Credential -Force
+		} elseif ($connectby -eq "WinRMIP") {
+			Restart-Computer -ComputerName $vmIP -Credential $Credential -Force
+		} elseif ($connectby -eq "VMTOOLS") {
+			Restart-VMGuest -VM $vmName -Confirm:$false
+		}
     }
+	Write-Host "If multiple Console Servers are deployed, follow instructions in following link:" -ForegroundColor Yellow
+	Write-Host "https://docs.vmware.com/en/VMware-Workspace-ONE-UEM/2005/UEM_Installation/GUID-AWT-DISABLE-SERVICES-MULTIPLE-SERVS.html" `n -ForegroundColor Yellow
+	
 }
 
 Function Invoke-VMToolsCopy {
     param(
         [String] $vmName,
+		[String] $vmRole,
         [String] $vmFqdn,
-        [String] $vmRole,
         [String] $stagevCenter
         #[String] $vcCreds
     )
@@ -590,6 +624,8 @@ $drivefree = $drive.Free/1GB
                 
                 Disconnect-VIServer * -Force -Confirm:$false
                 
+                $CheckVMToolsCopy =  $true
+                return $CheckVMToolsCopy
             }
         }
     }
@@ -598,7 +634,7 @@ $drivefree = $drive.Free/1GB
 Function Invoke-PSCopy {
     param(
         [String] $vmName,
-        [String] $vmRole,
+		[String] $vmRole,
         $Session
     )
 
@@ -608,9 +644,6 @@ Function Invoke-PSCopy {
         $destDrive = $destinationDir.SubString(0,1)
         $remoteServerDrive = Invoke-Command -Session $Session -ScriptBlock { Get-PSDrive $using:destDrive }
         $testfreespace = $($remoteServerDrive.Free/1GB)
-        
-        $desttoolsDir = $destinationDir + "\" + $WS1Config.globalConfig.deploymentDirectories.toolsDir
-        $destInstallerDir = $destinationDir + "\" + $WS1Config.globalConfig.deploymentDirectories.InstallerDir
 
         #Write-Host "current free disk space is $testfreespace"        
         If ( $testfreespace -lt 10) {
@@ -621,31 +654,36 @@ Function Invoke-PSCopy {
             If (! $existsdestinationDir) {
                 #Create base destination folders
                 Write-Host "Creating destination base folder $destinationDir on $vmName" -ForegroundColor Green
-                Invoke-Command -Session $Session -ScriptBlock {New-Item -Path $using:destinationDir -ItemType Directory -Force}
+                Invoke-Command -Session $Session -ScriptBlock {New-Item -Path $using:destinationDir -ItemType Directory -Force | Out-Null}
             } Else {
                 #Base Directory exists
             }
-
-            #Copy Tools files to destination $destToolsDir
+            
+			#Copy Tools files to destination $destToolsDir
             write-host "Copying ToolsDir files to $vmName" -ForegroundColor Green
             Copy-Item -ToSession $session -Path $toolsDir -Destination $desttoolsDir -Recurse -Force -Confirm:$false
             
-            #Copy installer zip files to destination directory
+			#Copy installer files to destination directory
             if ($vmRole -ne "DB") {
                 write-host "Copying Installer files to $vmName" -ForegroundColor Green
-                Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destinationDir -Exclude "DB" -Recurse -Force -Confirm:$false
+                #Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destinationDir -Exclude "DB" -Recurse -Force -Confirm:$false
+				Copy-Item -ToSession $Session -Path (Get-Item -Path "$InstallerDir\*" -Exclude ('DB')).FullName -Destination $destinationDir -Recurse -Force  -Confirm:$false
             } Elseif ($vmRole -eq "DB") {
                 write-host "Copying Installer files to $vmName" -ForegroundColor Green
-                Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destinationDir -Exclude "Application" -Recurse -Force -Confirm:$false
+                #Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destinationDir -Exclude "Application" -Recurse -Force -Confirm:$false
+				Copy-Item -ToSession $Session -Path (Get-Item -Path "$InstallerDir\*" -Exclude ('Application')).FullName -Destination $destinationDir -Recurse -Force  -Confirm:$false
             }
 
         #Disconnect from Windows Server
         Remove-PSSession $Session
-
+        
+        $CheckPSCopy =  $true
+        return $CheckPSCopy
         } 
 	} else {
-    	Write-Host "Failed to create PSSession for $vmName, so couldn't copy files"
-
+	write-host "no PSSession for $vmName"
+        $CheckPSCopy =  $false
+        return $CheckPSCopy
     }
 }
 
@@ -656,10 +694,15 @@ function Invoke-CheckVMConnectivity{
         [string]$vmFqdn,
         [string]$vmIP
 	) 
-
+    #called by other functions before their action - eg Pre-req,Staging,Phase1 Install, Phase 2 DB cmds, Phase App cmds
+    # Check if PSRemoting is enabled and functional
+<#     if((Test-NetConnection -ComputerName $Computer -Port 5986).TcpTestSucceeded -eq $true) {
+        $result.stdout += "WinRM enabled successfully.`n"
+    } #>
+	
     if (Test-WsMan -ComputerName $vmFqdn) {
         Write-Host "Connected to $vmFqdn over the network!" `n -ForegroundColor Green
-        $connection = "WinRMFQDN"}
+		$connection = "WinRMFQDN"}
     elseif (Test-WsMan -ComputerName $vmIP){ 
         Write-Host "Connected to $vmName ($vmIP) via IP over the network!" `n -ForegroundColor Green
         $connection = "WinRMIP"}
@@ -1422,13 +1465,14 @@ While(! $Quit){
     ($Selection) {
     1 {
         Write-Host "PHASE 1 - Create New Application Server VMs" -ForegroundColor Cyan `n
-        Invoke-CreateVMs -vmArray $priAppServers $PrivCenter #$VCPriCred
-        Invoke-CreateVMs -vmArray $priDMZAppServers $PriDMZvCenter #$VCDMZPriCred
+        Write-Host "CURRENTLY DISABLED, PLEASE DO THIS MANUALLY" -ForegroundColor Red `n
+		#Invoke-CreateVMs -vmArray $priAppServers $PrivCenter #$VCPriCred
+        #Invoke-CreateVMs -vmArray $priDMZAppServers $PriDMZvCenter #$VCDMZPriCred
         #test if secondary exists
-        if($SecvCenter){
-            Invoke-CreateVMs -vmArray $secAppServers $SecvCenter #$VCSecCred
-            Invoke-CreateVMs -vmArray $secDMZAppServers $SecDMZvCenter #$VCDMZSecCred
-        }
+        #if($SecvCenter){
+        #    Invoke-CreateVMs -vmArray $secAppServers $SecvCenter #$VCSecCred
+        #    Invoke-CreateVMs -vmArray $secDMZAppServers $SecDMZvCenter #$VCDMZSecCred
+        #}
     }
     2 {
         Write-Host "PHASE 1 - Stage installer binaries to New Application & DB servers" -ForegroundColor Cyan `n
@@ -1472,8 +1516,8 @@ While(! $Quit){
     }
     7 {
         Write-Host "PHASE 2 - Run PHASE 2 components on Application Servers" -ForegroundColor Cyan `n
-        Invoke-InstallPhase2 -vmArray $secAppServers $SecvCenter #$VCSecCred
-        Invoke-InstallPhase2 -vmArray $secDMZAppServers $SecDMZvCenter #$VCDMZSecCred
+        Invoke-InstallPhase2 -vmArray $priAppServers $PrivCenter #$VCSecCred
+        Invoke-InstallPhase2 -vmArray $priDMZAppServers $PriDMZvCenter #$VCDMZSecCred
         #test if secondary exists
         if($SecvCenter){
             Invoke-InstallPhase2 -vmArray $secAppServers $SecvCenter #$VCSecCred
