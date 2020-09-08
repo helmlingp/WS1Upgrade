@@ -1,0 +1,234 @@
+﻿{
+  "globalConfig": {
+    "deploymentDirectories": {
+      "InstallerDir": "Installer",
+      "PrereqsDir": "Prereqs",
+      "DBInstallerDir": "DB",
+      "AppInstallerDir": "Application",
+      "destinationDir": "C:\\Airwatch",
+      "toolsDir": "Tools",
+      "configDir": "Configs",
+      "certDir":  "Cert",
+	  "patchDir": "Patch"
+      },
+    "sslCertificates":  {
+      "pfxFileName":  "wildcard_pfx.pfx",
+      "pfxPassword":  "P@55W0rd!",
+      "pfxCommonName": "*.ws1upg.local"
+      },
+    "License": {
+      "CN":  {
+        "templateName": "W16-TEMPLATE",
+        "vCPU": "2",
+        "vMem": "8",
+        "HDD2": ""
+      },
+      "DS":  {
+        "templateName": "W16-TEMPLATE",
+        "vCPU": "2",
+        "vMem": "8",
+        "HDD2": ""
+      },
+      "API":  {
+        "templateName": "W16-TEMPLATE",
+        "vCPU": "2",
+        "vMem": "8",
+        "HDD2": ""
+      },
+      "AWCM":  {
+        "templateName": "W16-TEMPLATE",
+        "vCPU": "2",
+        "vMem": "8",
+        "HDD2": ""
+      }},
+      "INSTALL_TOKEN": "ADYIDLMLZI",
+      "COMPANY_NAME": "COMPANY"
+  },
+  "PrimaryWorkloadServers": {
+    "URLs": {
+      "URL1":  "https://cn01.ws1upg.local",
+      "URL2":  "https://ds01.ws1upg.local/AirWatchServices",
+      "URL3":  "https://api01.ws1upg.local/API",
+      "URL4":  "https://ds01.ws1upg.local/DeviceServices",
+      "URL5":  "https://ds01.ws1upg.local/DeviceServices/AirWatchSyncAppcast.xml",
+      "URL6":  "https://ds01.ws1upg.local/DeviceServices/AirWatchAgentAppcast.xml",
+      "URL7":  "https://ds01.ws1upg.local/DeviceManagement",
+	  "URL8":  "https://ds01.ws1upg.local/DeviceManagement/Enrollment",
+	  "URL9":  "https://awcm01.ws1upg.local:2001/awcm/status"
+    },
+    "vCenter": {
+      "Name": "vcsa-01",
+      "IP": "10.10.0.3",
+      "FQDN": "vcsa-01.lab.local"
+    },
+    "LoadBalancer": {
+      "Name": "lb-lab-01",
+      "VIP": "XXX",
+      "Pool": "YYY"
+    },
+    "servers": [
+      {
+        "Name": "cn01",
+        "IP": "10.2.202.101",
+        "MASK": "255.255.255.0",
+        "GW": "10.2.202.254",
+        "DNS": "10.2.202.2",
+        "FQDN": "cn01.ws1upg.local",
+        "vNIC": "vxw-dvs-43-universalwire-54-sid-30028-NSX-U-SERVER-01",
+        "Role": "CN"
+      },
+      {
+        "Name": "ds01",
+        "IP": "10.2.202.102",
+        "MASK": "255.255.255.0",
+        "GW": "10.2.202.254",
+        "DNS": "10.2.202.2",
+        "FQDN": "ds01.ws1upg.local",
+        "vNIC": "vxw-dvs-43-universalwire-54-sid-30028-NSX-U-SERVER-01",
+        "Role": "DS"
+      },
+      {
+        "Name": "api01",
+        "IP": "10.2.202.103",
+        "MASK": "255.255.255.0",
+        "GW": "10.2.202.254",
+        "DNS": "10.2.202.2",
+        "FQDN": "api01.ws1upg.local",
+        "vNIC": "vxw-dvs-43-universalwire-54-sid-30028-NSX-U-SERVER-01",
+        "Role": "API"
+      },
+      {
+        "Name": "awcm01",
+        "IP": "10.2.202.104",
+        "MASK": "255.255.255.0",
+        "GW": "10.2.202.254",
+        "DNS": "10.2.202.2",
+        "FQDN": "awcm01.ws1upg.local",
+        "vNIC": "vxw-dvs-43-universalwire-54-sid-30028-NSX-U-SERVER-01",
+        "Role": "AWCM"
+      }
+    ]
+    },
+  "PrimaryDMZServers": {
+    "vCenter": {
+      "Name": "vcsa-01",
+      "IP": "10.10.0.3",
+      "FQDN": "vcsa-01.lab.local"
+    },
+    "LoadBalancer": {
+      "Name": "lb-lab-02",
+      "VIP": "XXX",
+      "Pool": "YYY"
+    },
+    "servers": [
+      {
+        "Name": "ds20",
+        "IP": "10.200.202.102",
+        "MASK": "255.255.255.0",
+        "GW": "10.200.202.254",
+        "DNS": "10.2.202.2",
+        "FQDN": "ds20.ws1upg.local",
+        "vNIC": "vxw-dvs-43-universalwire-54-sid-30028-NSX-U-DMZ-01",
+        "Role": "DS"
+      },
+      {
+        "Name": "awcm20",
+        "IP": "10.200.202.104",
+        "MASK": "255.255.255.0",
+        "GW": "10.200.202.254",
+        "DNS": "10.2.202.2",
+        "FQDN": "awcm20.ws1upg.local",
+        "vNIC": "vxw-dvs-43-universalwire-54-sid-30028-NSX-U-DMZ-01",
+        "Role": "AWCM"
+      }
+    ]
+    },
+	"SecondaryWorkloadServers": {
+    "vCenter": {
+      "Name": "vcsa-02",
+      "IP": "10.11.0.3",
+      "FQDN": "vcsa-02.lab.local"
+    },
+    "LoadBalancer": {
+      "Name": "lb-lab-03",
+      "VIP": "XXX",
+      "Pool": "YYY"
+    },
+    "servers": [
+      {
+        "Name": "cn02",
+        "IP": "10.3.202.101",
+        "MASK": "255.255.255.0",
+        "GW": "10.3.202.254",
+        "DNS": "10.3.202.2",
+        "FQDN": "cn02.ws1upg.local",
+        "vNIC": "vxw-dvs-43-universalwire-54-sid-30028-NSX-U-SERVER-02",
+        "Role": "CN"
+      },
+      {
+        "Name": "ds02",
+        "IP": "10.3.202.102",
+        "MASK": "255.255.255.0",
+        "GW": "10.3.202.254",
+        "DNS": "10.3.202.2",
+        "FQDN": "ds02.ws1upg.local",
+        "vNIC": "vxw-dvs-43-universalwire-54-sid-30028-NSX-U-SERVER-02",
+        "Role": "DS"
+      },
+      {
+        "Name": "api02",
+        "IP": "10.3.202.103",
+        "MASK": "255.255.255.0",
+        "GW": "10.3.202.254",
+        "DNS": "10.3.202.2",
+        "FQDN": "api02.ws1upg.local",
+        "vNIC": "vxw-dvs-43-universalwire-54-sid-30028-NSX-U-SERVER-02",
+        "Role": "API"
+      },
+      {
+        "Name": "awcm02",
+        "IP": "10.3.202.104",
+        "MASK": "255.255.255.0",
+        "GW": "10.3.202.254",
+        "DNS": "10.3.202.2",
+        "FQDN": "awcm02.ws1upg.local",
+        "vNIC": "vxw-dvs-43-universalwire-54-sid-30028-NSX-U-SERVER-02",
+        "Role": "AWCM"
+      }
+    ]
+    },
+  "SecondaryDMZServers": {
+    "vCenter": {
+      "Name": "vcsa-02",
+      "IP": "10.11.0.3",
+      "FQDN": "vcsa-02.lab.local"
+    },
+    "LoadBalancer": {
+      "Name": "lb-lab-04",
+      "VIP": "XXX",
+      "Pool": "YYY"
+    },
+    "servers": [
+      {
+        "Name": "ds21",
+        "IP": "10.201.202.102",
+        "MASK": "255.255.255.0",
+        "GW": "10.201.202.254",
+        "DNS": "10.3.202.2",
+        "FQDN": "ds21.ws1upg.local",
+        "vNIC": "vxw-dvs-43-universalwire-54-sid-30028-NSX-U-DMZ-02",
+        "Role": "DS"
+      },
+      {
+        "Name": "awcm21",
+        "IP": "10.201.202.104",
+        "MASK": "255.255.255.0",
+        "GW": "10.201.202.254",
+        "DNS": "10.3.202.2",
+        "FQDN": "awcm21.ws1upg.local",
+        "vNIC": "vxw-dvs-43-universalwire-54-sid-30028-NSX-U-DMZ-02",
+        "Role": "AWCM"
+      }
+    ]
+    }
+}
