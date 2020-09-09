@@ -668,12 +668,12 @@ Function Invoke-PSCopy {
 			#Copy installer files to destination directory
             if ($vmRole -ne "DB") {
                 write-host "Copying Installer files to $vmName" -ForegroundColor Green
-                #Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destinationDir -Exclude "DB" -Recurse -Force -Confirm:$false
-				Copy-Item -ToSession $Session -Path (Get-Item -Path "$InstallerDir\*" -Exclude ('DB')).FullName -Destination $destinationDir -Recurse -Force  -Confirm:$false
+                Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destinationDir -Exclude "DB" -Recurse -Force -Confirm:$false
+				#Copy-Item -ToSession $Session -Path (Get-Item -Path "$InstallerDir\*" -Exclude ('DB')).FullName -Destination $destinationDir -Recurse -Force  -Confirm:$false
             } Elseif ($vmRole -eq "DB") {
                 write-host "Copying Installer files to $vmName" -ForegroundColor Green
-                #Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destinationDir -Exclude "Application" -Recurse -Force -Confirm:$false
-				Copy-Item -ToSession $Session -Path (Get-Item -Path "$InstallerDir\*" -Exclude ('Application')).FullName -Destination $destinationDir -Recurse -Force  -Confirm:$false
+                Copy-Item -ToSession $Session -Path $InstallerDir -Destination $destinationDir -Exclude "Application" -Recurse -Force -Confirm:$false
+				#Copy-Item -ToSession $Session -Path (Get-Item -Path "$InstallerDir\*" -Exclude ('Application')).FullName -Destination $destinationDir -Recurse -Force  -Confirm:$false
             }
 
         #Disconnect from Windows Server
